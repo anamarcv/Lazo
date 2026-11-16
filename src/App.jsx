@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Sidebar from './components/layout/Sidebar';
 import Header from './components/layout/Header';
 import DashboardView from './views/DashboardView';
@@ -11,8 +11,10 @@ import SettingsView from './views/SettingsView';
 import LoginView from './views/LoginView';
 import NewAppointmentModal from './components/common/NewAppointmentModal';
 import NewNoteModal from './components/common/NewNoteModal';
+import PatientFormModal from './components/patients/PatientFormModal';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import { MOCK_PATIENTS, TODAY_APPOINTMENTS } from './data/mockPatients';
+import { fetchAllPatients } from './services/patientApiService';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(true);
@@ -23,8 +25,24 @@ export default function App() {
   // Modals state
   const [isAgendarModalOpen, setIsAgendarModalOpen] = useState(false);
   const [isNotaModalOpen, setIsNotaModalOpen] = useState(false);
+  const [isPatientModalOpen, setIsPatientModalOpen] = useState(false);
+  const [patientToEdit, setPatientToEdit] = useState(null);
+
   const [patients, setPatients] = useState(MOCK_PATIENTS);
   const [appointments, setAppointments] = useState(TODAY_APPOINTMENTS);
+
+  // Load persisted patients from backend
+  useEffect(() => {
+    fetchAllPatients()
+      .then(data => {
+        if (data && Array.isArray(data) && data.length > 0) {
+          setPatients(data);
+        }
+      })
+      .catch(err => {
+        console.warn('Backend no disponible o error al cargar pacientes, usando estado local:', err.message);
+      });
+  }, []);
 
   const selectedPatient = (() => {
     const fromState = patients.find(p => p.id === selectedPatientId) || patients[0];
@@ -67,6 +85,29 @@ export default function App() {
     }));
   };
 
+  const handlePatientSaved = (savedPatient) => {
+    setPatients(prev => {
+      const idx = prev.findIndex(p => p.id === savedPatient.id);
+      if (idx !== -1) {
+        const next = [...prev];
+        next[idx] = savedPatient;
+        return next;
+      }
+      return [savedPatient, ...prev];
+    });
+    setSelectedPatientId(savedPatient.id);
+  };
+
+  const handleOpenNewPatientModal = () => {
+    setPatientToEdit(null);
+    setIsPatientModalOpen(true);
+  };
+
+  const handleOpenEditPatientModal = (patient) => {
+    setPatientToEdit(patient);
+    setIsPatientModalOpen(true);
+  };
+
   if (!isAuthenticated) {
     return <LoginView onLogin={() => setIsAuthenticated(true)} />;
   }
@@ -101,7 +142,10 @@ export default function App() {
 
             {currentView === 'patients' && (
               <PatientsDirectoryView 
+                patients={patients}
                 onSelectPatient={handleSelectPatient}
+                onOpenNewPatientModal={handleOpenNewPatientModal}
+                onOpenEditPatientModal={handleOpenEditPatientModal}
               />
             )}
 
@@ -112,6 +156,8 @@ export default function App() {
                 onBack={handleBackToPatients}
                 onOpenAgendarModal={() => setIsAgendarModalOpen(true)}
                 onOpenNotaModal={() => setIsNotaModalOpen(true)}
+                onOpenEditModal={() => handleOpenEditPatientModal(selectedPatient)}
+                onPatientUpdated={handlePatientSaved}
               />
             )}
 
@@ -150,6 +196,14 @@ export default function App() {
         onClose={() => setIsNotaModalOpen(false)}
         patient={selectedPatient}
         onSaveNote={handleSaveNote}
+      />
+
+      <PatientFormModal
+        isOpen={isPatientModalOpen}
+        onClose={() => setIsPatientModalOpen(false)}
+        patientToEdit={patientToEdit}
+        existingPatients={patients}
+        onPatientSaved={handlePatientSaved}
       />
     </div>
   );

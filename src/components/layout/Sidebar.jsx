@@ -6,10 +6,10 @@ import {
   Calendar, 
   BarChart3, 
   Settings, 
-  Stethoscope, 
   LogOut,
   ShieldCheck
 } from 'lucide-react';
+import LazoLogo from '../common/LazoLogo';
 import { CURRENT_DOCTOR } from '../../data/mockPatients';
 
 export default function Sidebar({ currentView, setCurrentView, selectedPatient, onSelectPatient, onLogout }) {
@@ -25,19 +25,19 @@ export default function Sidebar({ currentView, setCurrentView, selectedPatient, 
   return (
     <aside className="w-72 bg-white border-r border-slate-100 flex flex-col justify-between h-screen sticky top-0 z-30 select-none">
       <div>
-        {/* Brand Header */}
-        <div className="p-7 pb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-lazo-primary flex items-center justify-center text-white shadow-soft">
-              <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/>
-                <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/>
-                <path d="M9 12H4s.55-3.03 2-4.5c1.45-1.47 4.5-2 4.5-2"/>
-              </svg>
-            </div>
-            <div>
-              <span className="text-2xl font-bold tracking-tight text-lazo-primary">LAZO</span>
-              <p className="text-[11px] font-medium tracking-wide text-slate-400 uppercase">Seguimiento DM2</p>
+        {/* Brand Header con Logotipo Oficial */}
+        <div className="px-6 pt-7 pb-4">
+          <div 
+            onClick={() => setCurrentView('dashboard')}
+            className="cursor-pointer group flex flex-col gap-2"
+          >
+            <LazoLogo 
+              variant="color" 
+              className="h-12 w-auto max-w-[210px] object-contain object-left transition-transform group-hover:scale-[1.02]" 
+            />
+            <div className="flex items-center gap-1.5 pl-0.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+              <p className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Portal Clínico DM2 · V1</p>
             </div>
           </div>
         </div>

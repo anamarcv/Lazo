@@ -16,19 +16,22 @@ import {
   CircleSlash,
   Edit3
 } from 'lucide-react';
+import { validateFieldApi } from '../../../services/patientApiService';
 
-export default function TabAntecedentes({ patient }) {
+export default function TabAntecedentes({ patient, onPatientUpdated }) {
   const ant = patient?.antecedentes || {};
+  const isFemale = String(patient?.sexo || '').trim().toLowerCase().startsWith('f');
 
-  // APNP default data if not present on patient
+  // APNP default data if not present on patient (gender-aware)
   const defaultApnp = {
     datosGenerales: {
-      originaria: "Ciudad de México",
-      residencia: "Ciudad de México",
+      originaria: patient?.direccion || "Ciudad de México",
+      originario: patient?.direccion || "Ciudad de México",
+      residencia: patient?.direccion || "Ciudad de México",
       escolaridad: "Secundaria",
-      ocupacion: "Ama de casa",
+      ocupacion: isFemale ? "Comerciante / Hogar" : "Empleado / Guardia de seguridad",
       religion: "Católica",
-      estadoCivil: "Soltera",
+      estadoCivil: isFemale ? "Casada" : "Casado",
       tipoSanguineo: "O+",
       verificacionTipoSanguineo: "Verificado en cartilla",
       zoonosis: "Niega",
@@ -114,6 +117,22 @@ export default function TabAntecedentes({ patient }) {
     setActiveModal(null);
     setNotice(`Se registró la actualización en: ${genericFormTitle}`);
     setTimeout(() => setNotice(''), 3000);
+  };
+
+  const handleValidateFromAntecedentes = async (section) => {
+    try {
+      const res = await validateFieldApi(patient.id, {
+        section,
+        notas: 'Validado por médico tratante en revisión de antecedentes'
+      });
+      if (onPatientUpdated) {
+        onPatientUpdated(res.patient);
+      }
+      setNotice(`Dato de ${section === 'actividadFisica' ? 'actividad física' : 'alimentación'} validado exitosamente.`);
+      setTimeout(() => setNotice(''), 3000);
+    } catch (err) {
+      alert(`Error al validar: ${err.message}`);
+    }
   };
 
   return (
@@ -274,8 +293,8 @@ export default function TabAntecedentes({ patient }) {
                 <div className="text-xs text-slate-600 leading-relaxed">
                   <p className="font-bold text-slate-900 text-xs mb-0.5">Datos generales y exposiciones</p>
                   <p>
-                    <span className="font-bold text-slate-800">Originaria:</span> {apnp.datosGenerales.originaria}.{' '}
-                    <span className="font-bold text-slate-800">Residencia:</span> {apnp.datosGenerales.residencia}.{' '}
+                    <span className="font-bold text-slate-800">{isFemale ? 'Originaria' : 'Originario'}:</span> {apnp.datosGenerales.originario || apnp.datosGenerales.originaria || 'No especificado'}.{' '}
+                    <span className="font-bold text-slate-800">Residencia:</span> {apnp.datosGenerales.residencia || 'Ciudad de México'}.{' '}
                     <span className="font-bold text-slate-800">Escolaridad:</span> {apnp.datosGenerales.escolaridad}.{' '}
                     <span className="font-bold text-slate-800">Ocupación:</span> {apnp.datosGenerales.ocupacion}.{' '}
                     <span className="font-bold text-slate-800">Religión:</span> {apnp.datosGenerales.religion}.{' '}
@@ -292,14 +311,66 @@ export default function TabAntecedentes({ patient }) {
                 <div className="w-9 h-9 rounded-2xl bg-emerald-50/80 border border-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5">
                   <Apple className="w-4 h-4" />
                 </div>
-                <div className="text-xs text-slate-600 leading-relaxed">
-                  <p className="font-bold text-slate-900 text-xs mb-0.5">Alimentación y hábitos de vida</p>
+                <div className="text-xs text-slate-600 leading-relaxed flex-1">
+                  <div className="flex items-center justify-between gap-2 mb-0.5">
+                    <p className="font-bold text-slate-900 text-xs">Alimentación y hábitos de vida</p>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                      {patient?.estiloVida?.actividadFisica?.fuente === 'llamada' || patient?.estiloVida?.alimentacion?.fuente === 'llamada'
+                        ? 'Reportado en llamada'
+                        : 'Consulta médica'}
+                    </span>
+                  </div>
                   <p>
                     <span className="font-bold text-slate-800">Alimentación:</span> {apnp.habitosVida.alimentacion}.{' '}
                     <span className="font-bold text-slate-800">Consumo de agua:</span> {apnp.habitosVida.consumoAgua}.{' '}
                     <span className="font-bold text-slate-800">Actividad física:</span> {apnp.habitosVida.actividadFisica}.{' '}
                     <span className="font-bold text-slate-800">Hábitos higiénicos:</span> {apnp.habitosVida.habitosHigienicos}.
                   </p>
+
+                  {/* Dual-channel provenance badge & quick validate action */}
+                  {patient?.estiloVida?.actividadFisica?.fuente === 'llamada' && (
+                    <div className="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-purple-700 font-semibold bg-purple-50 px-2 py-0.5 rounded-full border border-purple-200">
+                        🏃 Actividad física reportada por paciente en llamada
+                      </span>
+                      {patient?.estiloVida?.actividadFisica?.estadoValidacion === 'reportado_paciente' ? (
+                        <button
+                          onClick={() => handleValidateFromAntecedentes('actividadFisica')}
+                          className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm flex items-center gap-1"
+                          title="Validar dato reportado por el paciente"
+                        >
+                          <Check className="w-3 h-3" />
+                          <span>Validar dato</span>
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                          ✓ Validado por médico
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {patient?.estiloVida?.alimentacion?.fuente === 'llamada' && (
+                    <div className="mt-2 pt-2 border-t border-slate-200/60 flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-purple-700 font-semibold bg-purple-50 px-2 py-0.5 rounded-full border border-purple-200">
+                        🥗 Alimentación reportada por paciente en llamada
+                      </span>
+                      {patient?.estiloVida?.alimentacion?.estadoValidacion === 'reportado_paciente' ? (
+                        <button
+                          onClick={() => handleValidateFromAntecedentes('alimentacion')}
+                          className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm flex items-center gap-1"
+                          title="Validar dato reportado por el paciente"
+                        >
+                          <Check className="w-3 h-3" />
+                          <span>Validar dato</span>
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                          ✓ Validado por médico
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -502,13 +573,19 @@ export default function TabAntecedentes({ patient }) {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                   <div>
-                    <label className="block text-slate-600 font-medium mb-1">Originaria</label>
+                    <label className="block text-slate-600 font-medium mb-1">
+                      Lugar de origen ({isFemale ? 'Originaria' : 'Originario'})
+                    </label>
                     <input 
                       type="text" 
-                      value={apnpForm.datosGenerales.originaria}
+                      value={apnpForm.datosGenerales.originario || apnpForm.datosGenerales.originaria || ''}
                       onChange={(e) => setApnpForm({
                         ...apnpForm,
-                        datosGenerales: { ...apnpForm.datosGenerales, originaria: e.target.value }
+                        datosGenerales: { 
+                          ...apnpForm.datosGenerales, 
+                          originaria: e.target.value,
+                          originario: e.target.value 
+                        }
                       })}
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:ring-2 focus:ring-emerald-800/20 text-slate-800"
                     />

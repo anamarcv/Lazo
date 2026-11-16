@@ -22,8 +22,15 @@ import {
   ShieldAlert,
   Wrench
 } from 'lucide-react';
+import LiveCallModal from '../../../components/calls/LiveCallModal';
 
 export default function TabLlamadas({ patient }) {
+  // Modal de prueba interactiva de llamada en vivo (Gemini Live)
+  const [isLiveCallModalOpen, setIsLiveCallModalOpen] = useState(false);
+
+  // Estado de llamadas persistidas en el servidor
+  const [persistedCalls, setPersistedCalls] = useState([]);
+
   // Estado de llamada seleccionada (null = muestra historial operativo y tarjetas)
   const [selectedCallId, setSelectedCallId] = useState(null);
   const [activeCallTab, setActiveCallTab] = useState('resumen'); // 'resumen' | 'transcripcion'
@@ -31,19 +38,114 @@ export default function TabLlamadas({ patient }) {
   
   // Drawer state for "Ver fuente"
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [highlightedSecond, setHighlightedSecond] = useState(0);
+  const [highlightedSecond, setHighlightedSecond] = useState(null);
   const [sourceNote, setSourceNote] = useState('');
+  const [sourceQuote, setSourceQuote] = useState('');
 
-  // Audio Player State (Simulado)
+  // Audio Player State (Real con fallback)
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [audioError, setAudioError] = useState(null);
+  const [retryingCallId, setRetryingCallId] = useState(null);
+  const audioRef = React.useRef(null);
 
-  const calls = patient.llamadas || [];
+  // Carga reactiva de llamadas desde el backend persistido (/api/calls)
+  const fetchPersistedCalls = async () => {
+    try {
+      const res = await fetch(`/api/calls?patientId=${patient.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setPersistedCalls(data);
+        }
+      }
+    } catch (err) {
+      console.warn('No se pudieron obtener llamadas del backend:', err);
+    }
+  };
+
+  const handleRetrySummary = async (callId) => {
+    try {
+      setRetryingCallId(callId);
+      const res = await fetch(`/api/calls/${callId}/retry-summary`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        console.log('[TabLlamadas] Reintento de resumen exitoso:', data);
+        await fetchPersistedCalls();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Error al reintentar resumen: ${errData.error || res.statusText}`);
+      }
+    } catch (err) {
+      console.error('Error al reintentar resumen:', err);
+      alert('Error de conexión al reintentar resumen.');
+    } finally {
+      setRetryingCallId(null);
+    }
+  };
+
+  useEffect(() => {
+    fetchPersistedCalls();
+
+    const handleCallSaved = (event) => {
+      console.log('[TabLlamadas] 🔄 Evento lazo_call_saved detectado. Actualizando lista reactivamente:', event.detail?.id);
+      if (event.detail) {
+        setPersistedCalls(prev => {
+          if (prev.some(c => c.id === event.detail.id)) {
+            return prev.map(c => c.id === event.detail.id ? event.detail : c);
+          }
+          return [event.detail, ...prev];
+        });
+      }
+      fetchPersistedCalls();
+    };
+
+    window.addEventListener('lazo_call_saved', handleCallSaved);
+    return () => {
+      window.removeEventListener('lazo_call_saved', handleCallSaved);
+    };
+  }, [patient.id]);
+
+  // Sondeo periódico temporal para llamadas cuyo resumen se procesa en segundo plano
+  useEffect(() => {
+    const hasProcessing = persistedCalls.some(c => c.resumenEstado === 'processing');
+    if (!hasProcessing) return;
+
+    const interval = setInterval(() => {
+      fetchPersistedCalls();
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [persistedCalls, patient.id]);
+
+  // Fusión de llamadas: las grabadas en vivo persistidas van primero
+  const initialMockCalls = patient.llamadas || [];
+  const calls = [
+    ...persistedCalls,
+    ...initialMockCalls.filter(c => !persistedCalls.some(p => p.id === c.id))
+  ];
+
   const selectedCall = calls.find(c => c.id === selectedCallId);
   const maxDuration = selectedCall?.duracionSegundos || 258;
 
-  // Cálculo 100% dinámico y sincronizado de estadísticas operativas a partir de las llamadas reales
+  // Consolidar intervenciones consecutivas del mismo interlocutor en una sola caja por turno
+  const consolidatedTranscript = React.useMemo(() => {
+    if (!selectedCall?.transcripcionLiteral || !Array.isArray(selectedCall.transcripcionLiteral)) return [];
+    const merged = [];
+    for (const turn of selectedCall.transcripcionLiteral) {
+      const last = merged[merged.length - 1];
+      if (last && last.hablante === turn.hablante) {
+        last.texto = (last.texto + ' ' + turn.texto).trim();
+        last.segundoFin = turn.segundoFin || turn.segundo;
+      } else {
+        merged.push({ ...turn });
+      }
+    }
+    return merged;
+  }, [selectedCall?.transcripcionLiteral]);
+
+  // Cálculo dinámico de estadísticas operativas
   const operacionStats = {
     completadas: calls.filter(c => c.estado.toLowerCase().includes('completada')).length,
     sinRespuesta: calls.filter(c => c.estado.toLowerCase().includes('sin respuesta') || c.estado.toLowerCase().includes('no contestada')).length,
@@ -53,10 +155,11 @@ export default function TabLlamadas({ patient }) {
 
   const totalLlamadasCalculado = operacionStats.completadas + operacionStats.sinRespuesta + operacionStats.interrumpidasSeguridad + operacionStats.fallidasTecnicas;
 
-  // Audio timer simulation
+  // Manejo de reproducción de audio (elemento HTML5 real o fallback temporal)
   useEffect(() => {
     let interval = null;
-    if (isPlaying) {
+    // Si no hay audioUrl o el audio falló, usar simulación temporal de progreso
+    if (isPlaying && (!selectedCall?.audioUrl || !audioRef.current)) {
       interval = setInterval(() => {
         setCurrentTime((prev) => {
           if (prev >= maxDuration) {
@@ -68,7 +171,18 @@ export default function TabLlamadas({ patient }) {
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [isPlaying, maxDuration]);
+  }, [isPlaying, maxDuration, selectedCall?.audioUrl]);
+
+  // Reset de audio al cambiar de llamada seleccionada
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setAudioError(null);
+  }, [selectedCallId]);
 
   const formatSeconds = (sec) => {
     const m = Math.floor(sec / 60);
@@ -76,22 +190,90 @@ export default function TabLlamadas({ patient }) {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const handleSeek = (sec) => {
-    setCurrentTime(sec);
+  const handleTogglePlay = () => {
+    setAudioError(null);
+    if (!selectedCall?.audioUrl && selectedCall?.grabacionConservada === false) {
+      setAudioError('Grabación no disponible: fue purgada por falta de consentimiento conforme al protocolo NOM-004.');
+      return;
+    }
+    if (audioRef.current && selectedCall?.audioUrl) {
+      if (audioRef.current.paused) {
+        audioRef.current.play().then(() => {
+          setIsPlaying(true);
+        }).catch((err) => {
+          console.warn('Audio play error:', err);
+          setAudioError('Error al reproducir audio: ' + (err.message || 'archivo inaccesible'));
+          setIsPlaying(false);
+        });
+      } else {
+        audioRef.current.pause();
+        setIsPlaying(false);
+      }
+    } else {
+      setIsPlaying(prev => !prev);
+    }
   };
 
-  const handleOpenSource = (second, note) => {
-    setHighlightedSecond(second);
-    setSourceNote(note);
-    setCurrentTime(second);
-    setIsPlaying(true);
+  const handleSeek = (sec) => {
+    const s = Math.max(0, Math.min(sec, maxDuration));
+    setCurrentTime(s);
+    if (audioRef.current && selectedCall?.audioUrl) {
+      audioRef.current.currentTime = s;
+    }
+  };
+
+  // Cálculo de segundo contextual con pre-roll para que el médico escuche la pregunta de Lazo antes de la respuesta del paciente
+  const getContextualAudioSecond = (targetSecond, transcript, maxPreRoll = 3.5) => {
+    if (targetSecond == null || isNaN(targetSecond)) return 0;
+    if (!transcript || transcript.length === 0) {
+      return Math.max(0, targetSecond - maxPreRoll);
+    }
+    // Buscar el turno que contiene o precede inmediatamente al segundo objetivo
+    const turnIndex = transcript.findIndex(t => 
+      t.segundo <= targetSecond && (t.segundoFin == null || t.segundoFin >= targetSecond)
+    );
+    if (turnIndex > 0) {
+      const prevTurn = transcript[turnIndex - 1];
+      // Si la intervención anterior es de Lazo (la pregunta clínica) y está a 12s o menos
+      if (prevTurn && prevTurn.hablante && prevTurn.hablante.toLowerCase().includes('lazo') && (targetSecond - prevTurn.segundo) <= 12) {
+        return Math.max(0, prevTurn.segundo);
+      }
+    }
+    // Fallback: aplicar pre-roll suave de 3.5 segundos
+    return Math.max(0, targetSecond - maxPreRoll);
+  };
+
+  const handleOpenSource = (second, note, quoteText = '') => {
+    setSourceNote(note || '');
+    setSourceQuote(quoteText || '');
+    if (second != null && !isNaN(second)) {
+      setHighlightedSecond(second);
+      const contextualSecond = getContextualAudioSecond(second, selectedCall?.transcripcionLiteral);
+      handleSeek(contextualSecond);
+      if (audioRef.current && selectedCall?.audioUrl) {
+        audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+      } else {
+        setIsPlaying(true);
+      }
+    } else {
+      setHighlightedSecond(null);
+    }
     setDrawerOpen(true);
   };
 
-  // Replay snippet from the beginning
+  // Replay snippet from the beginning con pre-roll
   const handleReplaySnippet = () => {
-    setCurrentTime(highlightedSecond || 0);
-    setIsPlaying(true);
+    if (highlightedSecond != null) {
+      const contextualSecond = getContextualAudioSecond(highlightedSecond, selectedCall?.transcripcionLiteral);
+      handleSeek(contextualSecond);
+    } else {
+      handleSeek(0);
+    }
+    if (audioRef.current && selectedCall?.audioUrl) {
+      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+    } else {
+      setIsPlaying(true);
+    }
   };
 
   const handleCopySummary = () => {
@@ -151,9 +333,19 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
                 </p>
               </div>
 
-              <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-lazo-canvas border border-slate-200/80 text-slate-700 w-fit">
-                Total: {calls.length} {calls.length === 1 ? 'llamada registrada' : 'llamadas registradas'}
-              </span>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => setIsLiveCallModalOpen(true)}
+                  className="px-4 py-2 rounded-xl bg-[#0D4D43] hover:bg-emerald-900 text-white text-xs font-bold transition-all shadow-soft flex items-center gap-2 cursor-pointer"
+                  title="Iniciar sesión de audio bidireccional en vivo con Gemini Live"
+                >
+                  <Sparkles className="w-4 h-4 text-emerald-300" />
+                  <span>Probar llamada en vivo (Gemini Live)</span>
+                </button>
+                <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-lazo-canvas border border-slate-200/80 text-slate-700 w-fit">
+                  Total: {calls.length} {calls.length === 1 ? 'llamada registrada' : 'llamadas registradas'}
+                </span>
+              </div>
             </div>
 
             {/* 4 Indicadores Operativos (100% sincronizados con las llamadas reales) */}
@@ -284,6 +476,13 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
                           <span className="text-xs font-bold text-slate-800">{c.fechaHora}</span>
                           
                           <div className="flex flex-wrap items-center gap-1.5">
+                            {c.esPruebaEnVivo && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10.5px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shrink-0">
+                                <Sparkles className="w-3 h-3 text-emerald-700" />
+                                Prueba en Vivo
+                              </span>
+                            )}
+
                             {isEmergency && (
                               <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800 border border-red-300 shrink-0">
                                 <AlertOctagon className="w-3.5 h-3.5" />
@@ -297,6 +496,27 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
                               </span>
                             )}
 
+                            {c.resumenEstado === 'processing' && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 animate-pulse shrink-0">
+                                <Clock className="w-3 h-3 animate-spin" />
+                                Procesando notas...
+                              </span>
+                            )}
+
+                            {c.resumenEstado === 'error' && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRetrySummary(c.id);
+                                }}
+                                disabled={retryingCallId === c.id}
+                                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200 transition-colors shrink-0"
+                              >
+                                <Wrench className="w-3 h-3" />
+                                {retryingCallId === c.id ? 'Reintentando...' : 'Reintentar resumen'}
+                              </button>
+                            )}
+
                             {/* Chip de estado ajustado con texto completo sin corte */}
                             <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold shrink-0 ${
                               isInterrupted
@@ -305,6 +525,8 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
                                 ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold' 
                                 : isSinRespuesta
                                 ? 'bg-slate-100 text-slate-700 border border-slate-200'
+                                : c.resumenEstado === 'processing'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
                                 : 'bg-slate-100 text-slate-700'
                             }`}>
                               {isInterrupted ? 'Interrumpida por seguridad' : c.estado}
@@ -320,7 +542,11 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
                           Dirección: <strong>{c.direccion}</strong> · Duración: <strong>{c.duracion}</strong>
                         </p>
 
-                        {c.resumenClinico?.seguridadYAlertas?.sintomasAlarma ? (
+                        {c.resumenClinico?.generado === false || c.resumenClinico?.motivoAbstencion ? (
+                          <div className="mt-3 p-3 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                            <strong>Atención clínica:</strong> Resumen no generado por calidad insuficiente. Se requiere revisión de la grabación original.
+                          </div>
+                        ) : c.resumenClinico?.seguridadYAlertas?.sintomasAlarma ? (
                           <div className="mt-3 p-3 rounded-2xl bg-slate-50 border border-slate-100 text-xs text-slate-600 line-clamp-2">
                             <strong>Síntesis clínica:</strong> {c.resumenClinico.seguridadYAlertas.sintomasAlarma}
                           </div>
@@ -411,12 +637,39 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
               </div>
             </div>
 
-            {/* REPRODUCTOR PERMANENTE DE AUDIO REAL (Simulado) */}
+            {/* REPRODUCTOR DE AUDIO REAL DE LA LLAMADA */}
             <div className="p-5 rounded-2xl bg-lazo-canvas border border-slate-200/80 space-y-3">
+              {/* Elemento de audio HTML5 nativo */}
+              {selectedCall?.audioUrl && (
+                <audio
+                  ref={audioRef}
+                  src={selectedCall.audioUrl}
+                  preload="metadata"
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  onTimeUpdate={() => {
+                    if (audioRef.current) {
+                      setCurrentTime(Math.round(audioRef.current.currentTime));
+                    }
+                  }}
+                  onEnded={() => {
+                    setIsPlaying(false);
+                    setCurrentTime(0);
+                  }}
+                  onError={(e) => {
+                    console.warn('Audio tag event error:', e);
+                    setAudioError('No se pudo cargar el audio grabado desde el servidor. Si el archivo fue purgado por falta de consentimiento o el servidor se reinició, la transcripción literal permanece accesible para revisión.');
+                    setIsPlaying(false);
+                  }}
+                />
+              )}
+
               <div className="flex items-center justify-between text-xs">
                 <span className="font-bold text-slate-700 flex items-center gap-2">
                   <Volume2 className="w-4 h-4 text-lazo-primary" />
-                  Grabación íntegra de la llamada telefónica (Voz humana)
+                  {selectedCall?.grabacionConservada !== false 
+                    ? 'Grabación de la llamada (Voz sincronizada paciente y Lazo)'
+                    : 'Grabación purgada por falta de consentimiento conforme a NOM-004'}
                 </span>
                 <span className="font-mono text-slate-500 font-semibold">
                   {formatSeconds(currentTime)} / {formatSeconds(maxDuration)}
@@ -425,14 +678,16 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
 
               <div className="flex items-center gap-4">
                 <button
-                  onClick={() => setIsPlaying(!isPlaying)}
+                  onClick={handleTogglePlay}
                   className="w-10 h-10 rounded-2xl bg-lazo-primary hover:bg-lazo-primary-hover text-white flex items-center justify-center transition-colors shadow-soft shrink-0"
+                  disabled={selectedCall?.grabacionConservada === false && !selectedCall?.audioUrl}
+                  title={selectedCall?.grabacionConservada === false && !selectedCall?.audioUrl ? 'Audio purgado o no disponible' : isPlaying ? 'Pausar audio' : 'Reproducir grabación'}
                 >
                   {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
                 </button>
 
                 <button
-                  onClick={() => setCurrentTime(0)}
+                  onClick={() => handleSeek(0)}
                   className="p-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-500 hover:text-slate-700 border border-slate-200/60 transition-colors shrink-0"
                   title="Reiniciar audio"
                 >
@@ -449,6 +704,13 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
                   className="w-full accent-lazo-primary cursor-pointer h-2 bg-slate-200 rounded-lg"
                 />
               </div>
+
+              {audioError && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>{audioError}</span>
+                </div>
+              )}
             </div>
 
             {/* Sub-Pestañas: Resumen Clínico vs. Transcripción Literal */}
@@ -487,11 +749,106 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
               )}
             </div>
 
-            {/* CONTENIDO PESTAÑA 1: RESUMEN CLÍNICO (6 SECCIONES OBLIGATORIAS) */}
-            {activeCallTab === 'resumen' && selectedCall.resumenClinico ? (
-              <div className="space-y-6">
-                {/* Disclaimer de IA */}
-                <div className="p-3.5 rounded-2xl bg-lazo-sage/30 border border-lazo-sage-border flex items-center justify-between text-xs text-slate-600">
+            {/* CONTENIDO PESTAÑA 1: RESUMEN CLÍNICO (6 SECCIONES OBLIGATORIAS) O REGLA DE ABSTENCIÓN */}
+            {activeCallTab === 'resumen' && (
+              selectedCall.resumenEstado === 'processing' ? (
+                <div className="p-8 text-center bg-blue-50/60 rounded-3xl border border-blue-200 space-y-4 animate-fadeIn">
+                  <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center mx-auto border border-blue-200">
+                    <Clock className="w-6 h-6 animate-spin" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-bold text-slate-800">
+                      Generando documentación clínica en segundo plano...
+                    </h4>
+                    <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+                      La llamada ha finalizado y la grabación de audio está guardada de forma segura en el servidor. La síntesis estructurada NOM-004 se está procesando y aparecerá aquí automáticamente en unos segundos.
+                    </p>
+                  </div>
+                  <div className="pt-2 flex justify-center">
+                    <button
+                      onClick={() => setActiveCallTab('transcripcion')}
+                      className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold border border-slate-200 shadow-xs flex items-center gap-1.5"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Ver Transcripción Literal Preliminar</span>
+                    </button>
+                  </div>
+                </div>
+              ) : selectedCall.resumenEstado === 'error' ? (
+                <div className="p-8 text-center bg-amber-50/70 rounded-3xl border-2 border-amber-300 space-y-4 animate-fadeIn">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mx-auto border border-amber-300">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-bold text-slate-900">
+                      Error de documentación (Reintentable)
+                    </h4>
+                    <p className="text-xs text-slate-700 max-w-md mx-auto leading-relaxed">
+                      La llamada y su transcripción están guardadas de forma segura. La síntesis clínica automática experimentó un problema temporal de procesamiento.
+                    </p>
+                  </div>
+                  <div className="pt-2 flex justify-center gap-2">
+                    <button
+                      onClick={() => handleRetrySummary(selectedCall.id)}
+                      disabled={retryingCallId === selectedCall.id}
+                      className="px-4 py-2.5 rounded-xl bg-lazo-primary hover:bg-lazo-primary-hover text-white text-xs font-bold transition-all shadow-soft flex items-center gap-2"
+                    >
+                      <Wrench className="w-4 h-4" />
+                      <span>{retryingCallId === selectedCall.id ? 'Reintentando...' : 'Reintentar documentación ahora'}</span>
+                    </button>
+                    <button
+                      onClick={() => setActiveCallTab('transcripcion')}
+                      className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold border border-slate-200 shadow-xs flex items-center gap-1.5"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Ver Transcripción</span>
+                    </button>
+                  </div>
+                </div>
+              ) : selectedCall.resumenClinico?.generado === false || selectedCall.resumenClinico?.motivoAbstencion ? (
+                <div className="p-6 rounded-3xl bg-amber-50/90 border-2 border-amber-300 space-y-4 animate-fadeIn">
+                  <div className="flex items-start gap-4">
+                    <div className="w-11 h-11 rounded-2xl bg-amber-100 flex items-center justify-center shrink-0 border border-amber-300">
+                      <AlertTriangle className="w-6 h-6 text-amber-800" />
+                    </div>
+                    <div className="space-y-1.5 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-200 text-amber-900 uppercase tracking-wide">
+                          Regla de Calidad y Abstención
+                        </span>
+                        <span className="text-xs text-amber-700/80 font-medium">NOM-004 Auditable</span>
+                      </div>
+                      <h4 className="text-sm font-bold text-amber-950">
+                        Resumen clínico no generado
+                      </h4>
+                      <p className="text-xs font-semibold text-amber-900 leading-relaxed">
+                        La transcripción de esta llamada no tiene calidad suficiente para elaborar una síntesis confiable. Se requiere revisión de la grabación original.
+                      </p>
+                      {selectedCall.resumenClinico?.detallesCalidad && (
+                        <p className="text-[11.5px] text-amber-800 pt-1">
+                          <strong>Causa identificada:</strong> {selectedCall.resumenClinico.detallesCalidad}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-white/90 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <span className="text-slate-600 font-medium">
+                      El audio original de la llamada y la transcripción literal están disponibles para revisión médica directa:
+                    </span>
+                    <button
+                      onClick={() => setActiveCallTab('transcripcion')}
+                      className="px-4 py-2.5 rounded-xl bg-amber-900 hover:bg-amber-950 text-white font-bold transition-all flex items-center gap-2 cursor-pointer shadow-soft text-xs shrink-0"
+                    >
+                      <FileText className="w-4 h-4 text-amber-300" />
+                      <span>Ver Transcripción Literal Completa</span>
+                    </button>
+                  </div>
+                </div>
+              ) : selectedCall.resumenClinico ? (
+                <div className="space-y-6">
+                  {/* Disclaimer de IA */}
+                  <div className="p-3.5 rounded-2xl bg-lazo-sage/30 border border-lazo-sage-border flex items-center justify-between text-xs text-slate-600">
                   <span className="flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-lazo-primary" />
                     <strong>Síntesis estructurada por IA:</strong> Cada dato es verificable pulsando «Ver fuente».
@@ -505,13 +862,19 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
                     <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800">
                       1. Seguridad y Señales de Alarma
                     </h4>
-                    <button
-                      onClick={() => handleOpenSource(68, "Declaración de síntomas clínicos reportados en la llamada")}
-                      className="text-xs font-semibold text-lazo-primary hover:underline flex items-center gap-1"
-                    >
-                      <span>Ver fuente (01:08)</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </button>
+                    {(selectedCall.resumenClinico.seguridadYAlertas?.fuenteSegundo != null || (selectedCall.id === 'c1' && selectedCall.alertaGenerada?.includes('Emergencia'))) && (
+                      <button
+                        onClick={() => handleOpenSource(
+                          selectedCall.resumenClinico.seguridadYAlertas?.fuenteSegundo ?? 68,
+                          "Declaración de síntomas clínicos reportados en la llamada",
+                          selectedCall.resumenClinico.seguridadYAlertas?.citaTextual
+                        )}
+                        className="text-xs font-semibold text-lazo-primary hover:underline flex items-center gap-1"
+                      >
+                        <span>Ver fuente ({formatSeconds(selectedCall.resumenClinico.seguridadYAlertas?.fuenteSegundo ?? 68)})</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
                   <p className="text-xs text-slate-700 leading-relaxed">
                     {selectedCall.resumenClinico.seguridadYAlertas.sintomasAlarma}
@@ -564,14 +927,24 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
                               )}
                             </td>
                             <td className="py-3.5 px-4 text-right">
-                              {med.medicamento.includes('Insulina') && (
+                              {med.fuenteSegundo != null ? (
+                                <button
+                                  onClick={() => handleOpenSource(med.fuenteSegundo, `Reporte sobre ${med.medicamento}`, med.citaTextual)}
+                                  className="text-xs text-lazo-primary font-bold hover:underline inline-flex items-center gap-1"
+                                >
+                                  <span>Ver fuente ({formatSeconds(med.fuenteSegundo)})</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </button>
+                              ) : selectedCall.id === 'c1' && med.medicamento?.includes('Insulina') && med.dosisOmitidas !== '0' ? (
                                 <button
                                   onClick={() => handleOpenSource(41, "Omisión de dosis de insulina por temor al mareo")}
                                   className="text-xs text-lazo-primary font-bold hover:underline inline-flex items-center gap-1"
                                 >
-                                  <span>Ver fuente</span>
+                                  <span>Ver fuente (0:41)</span>
                                   <ExternalLink className="w-3 h-3" />
                                 </button>
+                              ) : (
+                                <span className="text-[11px] text-slate-400">Verificado</span>
                               )}
                             </td>
                           </tr>
@@ -615,13 +988,17 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
                             </td>
                             <td className="py-3 px-4 text-slate-500 text-[11px]">{g.certeza}</td>
                             <td className="py-3 px-4 text-right">
-                              <button
-                                onClick={() => handleOpenSource(68, `Dictado de cifra de glucosa: ${g.valor}`)}
-                                className="text-xs text-lazo-primary font-bold hover:underline inline-flex items-center gap-1"
-                              >
-                                <span>Ver audio</span>
-                                <ExternalLink className="w-3 h-3" />
-                              </button>
+                              {g.fuenteSegundo != null ? (
+                                <button
+                                  onClick={() => handleOpenSource(g.fuenteSegundo, `Dictado de cifra de glucosa: ${g.valor} mg/dL`, g.citaTextual)}
+                                  className="text-xs text-lazo-primary font-bold hover:underline inline-flex items-center gap-1"
+                                >
+                                  <span>Ver audio ({formatSeconds(g.fuenteSegundo)})</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </button>
+                              ) : (
+                                <span className="text-[11px] text-slate-400">Sin marca de audio</span>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -653,7 +1030,7 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
               <div className="p-8 text-center text-slate-500 bg-slate-50 rounded-2xl border border-slate-200/60 text-xs">
                 Esta llamada no cuenta con resumen clínico generado por no haber sido completada por el paciente.
               </div>
-            )}
+            ))}
 
             {/* CONTENIDO PESTAÑA 2: TRANSCRIPCIÓN LITERAL */}
             {activeCallTab === 'transcripcion' && (
@@ -662,21 +1039,31 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
                   Palabras textuales del diálogo telefónico. Haz clic en cualquier fragmento para reproducir desde ese segundo.
                 </div>
                 <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
-                  {selectedCall.transcripcionLiteral && selectedCall.transcripcionLiteral.length > 0 ? (
-                    selectedCall.transcripcionLiteral.map((t, idx) => (
+                  {consolidatedTranscript && consolidatedTranscript.length > 0 ? (
+                    consolidatedTranscript.map((t, idx) => (
                       <div
                         key={idx}
                         onClick={() => {
-                          setCurrentTime(t.segundo);
-                          setIsPlaying(true);
+                          handleSeek(t.segundo);
+                          if (audioRef.current && selectedCall?.audioUrl) {
+                            audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+                          } else {
+                            setIsPlaying(true);
+                          }
                         }}
-                        className="p-3.5 rounded-2xl border text-xs cursor-pointer transition-all bg-lazo-canvas border-slate-100 hover:bg-slate-50"
+                        className={`p-4 rounded-2xl border text-xs cursor-pointer transition-all ${
+                          t.hablante.includes('Lazo')
+                            ? 'bg-emerald-50/50 border-emerald-100 hover:bg-emerald-50'
+                            : 'bg-white border-slate-200/80 hover:bg-slate-50 shadow-xs'
+                        }`}
                       >
-                        <div className="flex items-center justify-between text-[11px] mb-1 font-semibold">
-                          <span className={t.hablante.includes('Lazo') ? 'text-lazo-primary' : 'text-slate-800'}>
+                        <div className="flex items-center justify-between text-[11px] mb-1.5 font-semibold">
+                          <span className={t.hablante.includes('Lazo') ? 'text-lazo-primary font-bold' : 'text-slate-800 font-bold'}>
                             {t.hablante}
                           </span>
-                          <span className="font-mono text-slate-400">{formatSeconds(t.segundo)}</span>
+                          <span className="font-mono text-slate-400 text-[10.5px]">
+                            {formatSeconds(t.segundo)} {t.segundoFin ? `- ${formatSeconds(t.segundoFin)}` : ''}
+                          </span>
                         </div>
                         <p className="text-slate-700 leading-relaxed">{t.texto}</p>
                       </div>
@@ -714,23 +1101,53 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
 
             <div className="mt-5 space-y-4">
               <div className="p-3.5 rounded-2xl bg-lazo-sage/40 border border-lazo-sage-border text-xs text-lazo-primary font-semibold">
-                Dato verificado: {sourceNote}
+                Dato en revisión médica: {sourceNote}
               </div>
 
-              <div className="p-4 rounded-2xl bg-lazo-canvas border border-slate-200 text-xs space-y-2">
-                <span className="text-slate-400 font-bold text-[11px] uppercase">Fragmento literal de audio</span>
-                <p className="text-slate-800 italic leading-relaxed">
-                  «Mire, desde la madrugada ando con náuseas muy feas, ya vomité tres veces y no tolero ni un traguito de agua. Me acabo de checar el azúcar en el glucómetro y me salió en trescientos cuarenta... 340 mg.»
-                </p>
-                <div className="pt-2 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-                  <span>Marca de tiempo de inicio: {formatSeconds(highlightedSecond || 0)}</span>
-                  <span className="text-emerald-700 font-bold">100% Concordancia</span>
+              {highlightedSecond != null ? (() => {
+                const matchedTurn = selectedCall?.transcripcionLiteral?.find(t => 
+                  t.segundo !== undefined && Math.abs(t.segundo - highlightedSecond) <= 5
+                ) || selectedCall?.transcripcionLiteral?.find(t => 
+                  t.segundo !== undefined && t.segundo <= highlightedSecond && (t.segundoFin == null || t.segundoFin >= highlightedSecond)
+                );
+
+                return (
+                  <div className="p-4 rounded-2xl bg-lazo-canvas border border-slate-200 text-xs space-y-2">
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
+                      <span className="font-bold text-slate-700">{matchedTurn?.hablante || 'Paciente'}</span>
+                      <span>{formatSeconds(highlightedSecond)}</span>
+                    </div>
+                    <p className="text-slate-800 italic leading-relaxed">
+                      «{sourceQuote || matchedTurn?.texto || 'Declaración auditada en la llamada.'}»
+                    </p>
+                    <div className="pt-2 flex items-center justify-between text-[11px] text-slate-500">
+                      <span className="text-slate-400">Transcripción verificada</span>
+                      <span className="text-emerald-700 font-semibold px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200/60">
+                        Evidencia auditada
+                      </span>
+                    </div>
+                  </div>
+                );
+              })() : (
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-2">
+                  <p className="text-slate-600 leading-relaxed">
+                    {sourceQuote || 'Información recopilada durante la llamada. No se dispone de una marca de tiempo exacta para reproducción aislada.'}
+                  </p>
+                  <div className="text-[11px] text-slate-400">
+                    Marca de tiempo no disponible para salto automático
+                  </div>
                 </div>
-              </div>
+              )}
 
-              <div className="text-xs text-slate-500 leading-relaxed">
-                El audio de la llamada ha saltado al segundo <strong>{formatSeconds(highlightedSecond || 0)}</strong> para auditar la declaración original del paciente sin intermediación.
-              </div>
+              {highlightedSecond != null ? (
+                <div className="text-xs text-slate-500 leading-relaxed">
+                  El audio de la llamada se reproduce con contexto previo (pregunta de Lazo) para auditar la declaración en el segundo <strong>{formatSeconds(highlightedSecond)}</strong> sin intermediación.
+                </div>
+              ) : (
+                <div className="text-xs text-slate-400 leading-relaxed">
+                  Puedes escuchar la grabación completa de la llamada utilizando los controles de audio principales.
+                </div>
+              )}
             </div>
           </div>
 
@@ -746,7 +1163,7 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
             </button>
 
             <button
-              onClick={() => setIsPlaying(!isPlaying)}
+              onClick={handleTogglePlay}
               className="flex-1 py-2.5 rounded-2xl bg-lazo-primary text-white text-xs font-semibold hover:bg-lazo-primary-hover flex items-center justify-center gap-2 shadow-soft transition-colors"
             >
               {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
@@ -762,6 +1179,19 @@ ${selectedCall.resumenClinico.informacionAdicional}`;
           </div>
         </div>
       )}
+
+      {/* Modal interactivo de llamada en vivo (Fase 1 - Gemini Live) */}
+      <LiveCallModal 
+        isOpen={isLiveCallModalOpen} 
+        onClose={() => setIsLiveCallModalOpen(false)} 
+        patient={patient} 
+        onCallCompleted={(savedCall, shouldSelect) => {
+          fetchPersistedCalls();
+          if (shouldSelect && savedCall?.id) {
+            setSelectedCallId(savedCall.id);
+          }
+        }}
+      />
     </div>
   );
 }

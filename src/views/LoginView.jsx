@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Stethoscope, Lock, Mail, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Lock, Mail, ArrowRight, ShieldCheck } from 'lucide-react';
+import LazoLogo from '../components/common/LazoLogo';
 
 export default function LoginView({ onLogin }) {
   const [email, setEmail] = useState('anamar.cordero@lazo-salud.mx');
@@ -20,17 +21,14 @@ export default function LoginView({ onLogin }) {
         <div className="absolute bottom-0 left-0 w-80 h-80 bg-lazo-mint/10 rounded-full -ml-28 -mb-28 pointer-events-none"></div>
 
         <div>
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-white/10 backdrop-blur-md flex items-center justify-center text-white border border-white/20 shadow-soft">
-              <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/>
-                <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/>
-                <path d="M9 12H4s.55-3.03 2-4.5c1.45-1.47 4.5-2 4.5-2"/>
-              </svg>
-            </div>
-            <div>
-              <span className="text-2xl font-black tracking-tight">LAZO</span>
-              <p className="text-[11px] font-medium tracking-wide text-white/70 uppercase">Portal Clínico V1</p>
+          <div className="flex flex-col gap-3">
+            <LazoLogo 
+              variant="white" 
+              className="h-16 w-auto max-w-[240px] object-contain object-left drop-shadow-sm" 
+            />
+            <div className="flex items-center gap-2 pl-0.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse"></span>
+              <p className="text-[11px] font-bold tracking-wider text-white/80 uppercase">Portal Clínico V1 · Protocolo NOM-004</p>
             </div>
           </div>
         </div>
@@ -62,6 +60,9 @@ export default function LoginView({ onLogin }) {
       <div className="flex-1 flex items-center justify-center p-8 lg:p-16 bg-lazo-canvas">
         <div className="max-w-md w-full bg-white p-8 lg:p-10 rounded-3xl border border-slate-100 shadow-card space-y-7 animate-fadeIn">
           <div>
+            <div className="lg:hidden mb-4">
+              <LazoLogo variant="color" className="h-10 w-auto" />
+            </div>
             <h3 className="text-2xl font-bold text-slate-900 tracking-tight">Iniciar Sesión</h3>
             <p className="text-xs text-slate-400 mt-1">
               Acceso exclusivo para médicos tratantes acreditados

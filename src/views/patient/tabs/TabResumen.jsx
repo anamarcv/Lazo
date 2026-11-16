@@ -16,9 +16,13 @@ import {
   FlaskConical,
   Info
 } from 'lucide-react';
+import { normalizeNotes } from '../../../services/patientApiService';
 
 export default function TabResumen({ patient, onNavigateTab, onOpenAgendarModal }) {
   const isEmergencia = patient.prioridadClinica === 'Emergencia';
+  const notasList = Array.isArray(patient?.notas)
+    ? patient.notas
+    : normalizeNotes(patient?.notas, patient);
 
   return (
     <div className="space-y-7 animate-fadeIn">
@@ -296,23 +300,23 @@ export default function TabResumen({ patient, onNavigateTab, onOpenAgendarModal 
             );
           })}
 
-          {patient.notas?.map((nota) => (
+          {notasList.map((nota) => (
             <div key={nota.id} className="p-4 rounded-2xl bg-[#F8FAFC] border border-slate-100 flex items-start justify-between gap-4">
               <div className="flex items-start gap-3">
                 <div className="mt-0.5 text-emerald-800 shrink-0">
-                  {nota.tipo.toLowerCase().includes('consulta') ? (
+                  {(nota.tipo || '').toLowerCase().includes('consulta') ? (
                     <Info className="w-4 h-4" />
                   ) : (
                     <FileText className="w-4 h-4" />
                   )}
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-slate-900">{nota.tipo}</p>
-                  <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{nota.contenido}</p>
+                  <p className="text-sm font-bold text-slate-900">{nota.tipo || 'Nota clínica'}</p>
+                  <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{nota.contenido || ''}</p>
                 </div>
               </div>
               <span className="text-xs text-slate-500 font-medium whitespace-nowrap shrink-0">
-                {nota.fechaHora}
+                {nota.fechaHora || nota.fecha || ''}
               </span>
             </div>
           ))}

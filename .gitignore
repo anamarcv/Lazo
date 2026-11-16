@@ -42,3 +42,9 @@ Thumbs.db
 .backups/
 scratch/
 
+# Backend audio recordings and call logs
+server/recordings/
+server/data/calls.json
+server/data/recordings/
+*.wav
+

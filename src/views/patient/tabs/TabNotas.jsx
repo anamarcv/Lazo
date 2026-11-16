@@ -9,17 +9,21 @@ import {
   CheckCircle,
   Search
 } from 'lucide-react';
+import { normalizeNotes } from '../../../services/patientApiService';
 
 export default function TabNotas({ patient, onOpenNotaModal }) {
   const [filterType, setFilterType] = useState('todos');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const notas = patient.notas || [];
+  const notas = Array.isArray(patient?.notas)
+    ? patient.notas
+    : normalizeNotes(patient?.notas, patient);
 
   const filteredNotas = notas.filter(n => {
+    if (!n) return false;
     const matchesType = filterType === 'todos' || n.tipo === filterType;
-    const matchesSearch = n.contenido.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          n.autor.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = (n.contenido || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+                          (n.autor || '').toLowerCase().includes(searchTerm.toLowerCase());
     return matchesType && matchesSearch;
   });
 

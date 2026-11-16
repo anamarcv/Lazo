@@ -7,7 +7,8 @@ import {
   Clock, 
   CheckCircle2, 
   ChevronLeft,
-  ArrowLeft
+  ArrowLeft,
+  Edit3
 } from 'lucide-react';
 
 export default function PatientHeader({ 
@@ -16,11 +17,13 @@ export default function PatientHeader({
   setActiveTab, 
   onBack, 
   onOpenAgendarModal, 
-  onOpenNotaModal 
+  onOpenNotaModal,
+  onOpenEditModal
 }) {
   const tabs = [
     { id: 'resumen', label: 'Resumen' },
     { id: 'antecedentes', label: 'Historia Clínica' },
+    { id: 'antropometria', label: 'Antropometría y Estilo de Vida' },
     { id: 'medicacion', label: 'Medicación' },
     { id: 'seguimiento', label: 'Seguimiento' },
     { id: 'laboratorios', label: 'Laboratorios' },
@@ -53,6 +56,11 @@ export default function PatientHeader({
                 <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
                   {patient.nombre}
                 </h2>
+                {patient.estadoAlta === 'borrador' && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-200">
+                    Borrador pendiente
+                  </span>
+                )}
                 {isEmergencia && (
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-lazo-emergency-light text-lazo-emergency border border-lazo-emergency-border">
                     <AlertOctagon className="w-3.5 h-3.5" />
@@ -69,16 +77,27 @@ export default function PatientHeader({
               <p className="text-xs text-slate-500 mt-1 flex items-center gap-3">
                 <span className="font-semibold text-slate-700">ID: {patient.id}</span>
                 <span>·</span>
-                <span>{patient.edad} años ({patient.sexo})</span>
+                <span>{patient.edad ? `${patient.edad} años` : 'Edad no reg.'} ({patient.sexo || 'No esp.'})</span>
                 <span>·</span>
-                <span className="text-lazo-primary font-medium">{patient.diagnosticoPrincipal}</span>
+                <span className="text-lazo-primary font-medium">{patient.diagnosticoPrincipal || 'Sin diagnóstico'}</span>
               </p>
             </div>
           </div>
         </div>
 
-        {/* Buttons: Agendar consulta and Agregar nota (NO contactar) */}
+        {/* Buttons: Editar datos, Agregar nota, Agendar consulta */}
         <div className="flex items-center gap-3">
+          {onOpenEditModal && (
+            <button
+              onClick={onOpenEditModal}
+              className="px-4 py-2.5 rounded-2xl bg-lazo-canvas hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-200/80 transition-colors flex items-center gap-2"
+              title="Editar datos del paciente"
+            >
+              <Edit3 className="w-3.5 h-3.5 text-slate-500" />
+              <span>Editar datos</span>
+            </button>
+          )}
+
           <button
             onClick={onOpenNotaModal}
             className="px-4 py-2.5 rounded-2xl bg-lazo-canvas hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-200/80 transition-colors flex items-center gap-2"

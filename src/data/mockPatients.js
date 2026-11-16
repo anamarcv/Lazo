@@ -212,12 +212,13 @@ export const MOCK_PATIENTS = [
       ],
       apnp: {
         datosGenerales: {
+          originario: "Ciudad de México",
           originaria: "Ciudad de México",
           residencia: "Ciudad de México",
           escolaridad: "Secundaria",
-          ocupacion: "Ama de casa",
+          ocupacion: "Empleado / Guardia de seguridad privada",
           religion: "Católica",
-          estadoCivil: "Soltera",
+          estadoCivil: "Casado",
           tipoSanguineo: "O+",
           verificacionTipoSanguineo: "Verificado en cartilla",
           zoonosis: "Niega",
