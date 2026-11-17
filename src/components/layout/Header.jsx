@@ -11,7 +11,7 @@ export const VIEW_TITLES = {
   settings: { title: "Configuración", subtitle: "Perfil médico, preferencias y parámetros del protocolo" }
 };
 
-export default function Header({ currentView, onGoToAlert, onSelectPatient }) {
+export default function Header({ currentView, onGoToAlert, onSelectPatient, reviewer }) {
   const current = VIEW_TITLES[currentView] || VIEW_TITLES.dashboard;
   const [showNotifications, setShowNotifications] = useState(false);
   const notifRef = useRef(null);
@@ -63,8 +63,14 @@ export default function Header({ currentView, onGoToAlert, onSelectPatient }) {
         <h1 className="text-xl font-bold tracking-tight text-lazo-text flex items-center gap-3">
           {current.title}
           <span className="text-xs px-2.5 py-1 rounded-full bg-lazo-sage text-lazo-primary font-medium tracking-normal">
-            Lazo V1
+            Lazo V2
           </span>
+          {reviewer?.name && (
+            <span className="hidden md:inline-flex text-[11px] px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+              {reviewer.name}
+            </span>
+          )}
         </h1>
         <p className="text-xs text-slate-500 mt-0.5">{current.subtitle}</p>
       </div>

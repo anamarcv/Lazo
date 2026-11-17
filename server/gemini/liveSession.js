@@ -4,6 +4,7 @@ import { buildClinicalSystemInstruction } from "./clinicalPrompts.js";
 import { recordingService } from "../services/recordingService.js";
 import { generateClinicalSummary } from "../services/clinicalSummaryService.js";
 import { saveCallRecord } from "../services/callPersistenceService.js";
+import { BASELINE_PATIENT_IDS } from "../services/authService.js";
 
 /**
  * Gestor de Sesión Bidireccional en Vivo (Lazo Gateway <-> Gemini Live API)
@@ -13,8 +14,15 @@ import { saveCallRecord } from "../services/callPersistenceService.js";
  * - Transcripción en vivo consolidada en UNA SOLA CAJA por turno conversacional
  * - Máquina de estados de consentimiento estructurada (6 fases de protocolo clínico)
  * - Persistencia y resumen clínico estricto basado exclusivamente en el diálogo
+ * - Límite de duración de 5 minutos (aviso a los 270s) y control de concurrencia
  */
 export class GeminiLiveSession {
+  static activeSessions = new Set();
+
+  static getActiveSessionsCount() {
+    return this.activeSessions.size;
+  }
+
   constructor(clientWs, options = {}) {
     this.clientWs = clientWs;
     this.patient = options.patient || {
@@ -22,6 +30,7 @@ export class GeminiLiveSession {
       nombre: "Roberto Méndez Silva",
       medicoTratante: "Dra. Anamar Cordero Valle"
     };
+    this.reviewer = options.reviewer || null;
 
     // ID único de la llamada
     const now = new Date();
@@ -36,13 +45,11 @@ export class GeminiLiveSession {
     this.isClosed = false;
     this.isEnding = false;
 
+    // Temporizadores de límite de duración
+    this.warningTimer = null;
+    this.cutoffTimer = null;
+
     // Máquina de estados de consentimiento y conversación
-    // Fases: 
-    // 1. GREETING_IDENTITY: Saludo y verificación de identidad
-    // 2. AWAITING_CONSENT: Explicación de finalidad y solicitud explícita de consentimiento
-    // 3. MONITORING: Cuestionario clínico y exploración de barreras
-    // 4. CLOSING: Cierre acordado
-    // 5. ENDED: Finalizada
     this.conversationPhase = "GREETING_IDENTITY";
     this.consentState = "PENDING"; // PENDING | GRANTED | DENIED
     this.consentTimestamp = null;
@@ -64,6 +71,34 @@ export class GeminiLiveSession {
   }
 
   init() {
+    // 1. Verificación de límite de llamadas simultáneas
+    if (GeminiLiveSession.activeSessions.size >= (config.maxConcurrentCalls || 3)) {
+      console.warn(`[GeminiLive] ⚠️ Rechazando llamada: límite de concurrencia alcanzado (${config.maxConcurrentCalls}).`);
+      this.sendToClient({
+        type: "error",
+        code: "CONCURRENCY_LIMIT_REACHED",
+        message: `Se ha alcanzado el límite de ${config.maxConcurrentCalls} llamadas simultáneas permitidas por la infraestructura de evaluación. Por favor espere a que concluya una llamada activa.`
+      });
+      if (this.clientWs && this.clientWs.readyState === WebSocket.OPEN) {
+        this.clientWs.close(4003, "Concurrency limit reached");
+      }
+      return;
+    }
+
+    // 2. Protección estricta de pacientes basales de referencia
+    if (this.patient.isBaseline || BASELINE_PATIENT_IDS.has(this.patient.id)) {
+      console.warn(`[GeminiLive] 🛑 Rechazando llamada sobre paciente basal protegido: ${this.patient.id}`);
+      this.sendToClient({
+        type: "error",
+        code: "BASELINE_PATIENT_PROTECTED",
+        message: `El paciente ${this.patient.nombre} (${this.patient.id}) es de referencia clínica de solo lectura y no admite nuevas llamadas. Cree un nuevo paciente de prueba para interactuar con la telefonía en vivo.`
+      });
+      if (this.clientWs && this.clientWs.readyState === WebSocket.OPEN) {
+        this.clientWs.close(4003, "Baseline patient is protected");
+      }
+      return;
+    }
+
     if (!config.hasApiKey) {
       console.error("[GeminiLive] ERROR: GEMINI_API_KEY no está configurada.");
       this.sendToClient({
@@ -74,6 +109,32 @@ export class GeminiLiveSession {
       return;
     }
 
+    // Registrar sesión activa
+    GeminiLiveSession.activeSessions.add(this);
+
+    // Configurar temporizadores de duración reglamentaria de 5 minutos
+    const warningMs = (config.callWarningDurationSeconds || 270) * 1000;
+    const maxMs = (config.callMaxDurationSeconds || 300) * 1000;
+
+    this.warningTimer = setTimeout(() => {
+      if (!this.isClosed && !this.isEnding) {
+        console.log(`[GeminiLive] ⏱️ Advertencia de tiempo (270s) enviada al cliente para llamada ${this.callId}.`);
+        this.sendToClient({
+          type: "call_warning",
+          warningType: "duration_limit",
+          remainingSeconds: Math.max(0, Math.round((maxMs - warningMs) / 1000)),
+          message: "Límite de duración de 5 minutos próximo a alcanzarse (restan 30 segundos). La llamada se cerrará automáticamente."
+        });
+      }
+    }, warningMs);
+
+    this.cutoffTimer = setTimeout(() => {
+      if (!this.isClosed && !this.isEnding) {
+        console.log(`[GeminiLive] ⏱️ Corte de tiempo reglamentario (300s) alcanzado para llamada ${this.callId}. Finalizando...`);
+        this.endCall("timeout_duration_limit");
+      }
+    }, maxMs);
+
     const wsUrl = `${config.geminiLiveWsUrl}?key=${config.geminiApiKey}`;
     console.log(`[GeminiLive] Conectando a Gemini Live con modelo ${config.geminiModel} para llamada ${this.callId}...`);
 
@@ -81,6 +142,7 @@ export class GeminiLiveSession {
       this.geminiWs = new WebSocket(wsUrl);
     } catch (err) {
       console.error("[GeminiLive] Error al instanciar WebSocket con Gemini:", err);
+      GeminiLiveSession.activeSessions.delete(this);
       this.sendToClient({
         type: "error",
         code: "CONNECTION_FAILED",
@@ -616,7 +678,12 @@ export class GeminiLiveSession {
     this.isEnding = true;
     this.isClosed = true;
 
-    console.log(`[Gateway] 🏁 Finalizando llamada ${this.callId} (Motivo: ${reason})...`);
+    // Limpiar temporizadores de llamada y liberar cupo de concurrencia
+    if (this.warningTimer) { clearTimeout(this.warningTimer); this.warningTimer = null; }
+    if (this.cutoffTimer) { clearTimeout(this.cutoffTimer); this.cutoffTimer = null; }
+    GeminiLiveSession.activeSessions.delete(this);
+
+    console.log(`[Gateway] 🏁 Finalizando llamada ${this.callId} (Motivo: ${reason}). Concurrencia activa: ${GeminiLiveSession.activeSessions.size}`);
 
     // 1. Sellar cualquier turno activo antes de guardar
     this.finalizeActiveTurn();
@@ -655,6 +722,7 @@ export class GeminiLiveSession {
     const callRecord = {
       id: this.callId,
       patientId: this.patient.id || "LZ-0482",
+      revisorId: this.reviewer?.id || null,
       fechaHora,
       direccion: "Saliente interactiva (Lazo Web)",
       tipo: "Llamada de prueba en vivo (Gemini Live)",
@@ -687,7 +755,7 @@ export class GeminiLiveSession {
     };
 
     // 5. PERSISTENCIA SEGURA DURADERA INMEDIATA en server/data/calls.json
-    saveCallRecord(callRecord);
+    saveCallRecord(callRecord, this.reviewer?.id);
     console.log(`[Gateway] 💾 Registro seguro preliminar guardado en calls.json para ${this.callId}.`);
 
     // 6. Notificar al frontend la desconexión inmediata sin latencia
@@ -723,7 +791,9 @@ export class GeminiLiveSession {
             callMetadata: {
               callId: callRecord.id,
               durationSeconds: callRecord.duracionSegundos,
-              consentState: this.consentState
+              consentState: this.consentState,
+              terminacionMotivo: reason,
+              reason
             }
           });
 
@@ -735,14 +805,14 @@ export class GeminiLiveSession {
             ? "Interrumpida por seguridad" 
             : "Completada";
 
-          saveCallRecord(callRecord);
+          saveCallRecord(callRecord, this.reviewer?.id);
           console.log(`[Gateway] ✅ Documentación clínica completada y persistida exitosamente para ${callRecord.id}.`);
         } catch (err) {
           console.error(`[Gateway] ❌ Error en generación de resumen para ${callRecord.id}:`, err);
           callRecord.resumenEstado = "error";
           callRecord.estado = "Error de documentación (Reintentable)";
           callRecord.errorDetalle = err.message;
-          saveCallRecord(callRecord);
+          saveCallRecord(callRecord, this.reviewer?.id);
         }
       })();
     }

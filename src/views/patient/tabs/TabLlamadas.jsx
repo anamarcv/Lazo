@@ -53,7 +53,7 @@ export default function TabLlamadas({ patient }) {
   // Carga reactiva de llamadas desde el backend persistido (/api/calls)
   const fetchPersistedCalls = async () => {
     try {
-      const res = await fetch(`/api/calls?patientId=${patient.id}`);
+      const res = await fetch(`/api/calls?patientId=${patient.id}`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
@@ -68,7 +68,7 @@ export default function TabLlamadas({ patient }) {
   const handleRetrySummary = async (callId) => {
     try {
       setRetryingCallId(callId);
-      const res = await fetch(`/api/calls/${callId}/retry-summary`, { method: 'POST' });
+      const res = await fetch(`/api/calls/${callId}/retry-summary`, { method: 'POST', credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
         console.log('[TabLlamadas] Reintento de resumen exitoso:', data);

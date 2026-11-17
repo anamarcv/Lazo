@@ -87,7 +87,7 @@ export function normalizePatientData(patient) {
 }
 
 export async function fetchAllPatients() {
-  const res = await fetch(BASE_URL);
+  const res = await fetch(BASE_URL, { credentials: 'include' });
   if (!res.ok) {
     throw new Error(`Error al obtener pacientes: ${res.statusText}`);
   }
@@ -96,7 +96,7 @@ export async function fetchAllPatients() {
 }
 
 export async function fetchPatientById(patientId) {
-  const res = await fetch(`${BASE_URL}/${patientId}`);
+  const res = await fetch(`${BASE_URL}/${patientId}`, { credentials: 'include' });
   if (!res.ok) {
     throw new Error(`Error al obtener paciente ${patientId}: ${res.statusText}`);
   }
@@ -108,13 +108,15 @@ export async function createPatientApi(patientData) {
   const res = await fetch(BASE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(patientData)
   });
   const data = await res.json();
   if (!res.ok) {
-    const errorMsg = data.error || 'Error al crear paciente';
+    const errorMsg = data.message || data.error || 'Error al crear paciente';
     const err = new Error(errorMsg);
     err.status = res.status;
+    err.code = data.code;
     throw err;
   }
   return normalizePatientData(data);
@@ -124,13 +126,15 @@ export async function updatePatientApi(patientId, updateData) {
   const res = await fetch(`${BASE_URL}/${patientId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(updateData)
   });
   const data = await res.json();
   if (!res.ok) {
-    const errorMsg = data.error || 'Error al actualizar paciente';
+    const errorMsg = data.message || data.error || 'Error al actualizar paciente';
     const err = new Error(errorMsg);
     err.status = res.status;
+    err.code = data.code;
     throw err;
   }
   return normalizePatientData(data);
@@ -140,11 +144,15 @@ export async function addAnthropometryApi(patientId, measurementData) {
   const res = await fetch(`${BASE_URL}/${patientId}/anthropometry`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(measurementData)
   });
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.error || 'Error al registrar medición antropométrica');
+    const err = new Error(data.message || data.error || 'Error al registrar medición antropométrica');
+    err.status = res.status;
+    err.code = data.code;
+    throw err;
   }
   return {
     ...data,
@@ -156,11 +164,15 @@ export async function updateLifestyleApi(patientId, lifestyleData) {
   const res = await fetch(`${BASE_URL}/${patientId}/lifestyle`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(lifestyleData)
   });
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.error || 'Error al actualizar estilo de vida');
+    const err = new Error(data.message || data.error || 'Error al actualizar estilo de vida');
+    err.status = res.status;
+    err.code = data.code;
+    throw err;
   }
   return {
     ...data,
@@ -172,11 +184,15 @@ export async function validateFieldApi(patientId, validationData) {
   const res = await fetch(`${BASE_URL}/${patientId}/validate-field`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify(validationData)
   });
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.error || 'Error al validar campo reportado');
+    const err = new Error(data.message || data.error || 'Error al validar campo reportado');
+    err.status = res.status;
+    err.code = data.code;
+    throw err;
   }
   return {
     ...data,
@@ -185,10 +201,13 @@ export async function validateFieldApi(patientId, validationData) {
 }
 
 export async function fetchEnergyRequirementsApi(patientId, activityFactor = 1.2) {
-  const res = await fetch(`${BASE_URL}/${patientId}/energy-requirements?activityFactor=${activityFactor}`);
+  const res = await fetch(`${BASE_URL}/${patientId}/energy-requirements?activityFactor=${activityFactor}`, { credentials: 'include' });
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.error || 'Error al obtener requerimientos energéticos');
+    const err = new Error(data.message || data.error || 'Error al obtener requerimientos energéticos');
+    err.status = res.status;
+    err.code = data.code;
+    throw err;
   }
   return data;
 }

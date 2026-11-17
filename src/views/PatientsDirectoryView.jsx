@@ -16,7 +16,7 @@ import {
 import { MOCK_PATIENTS } from '../data/mockPatients';
 
 export default function PatientsDirectoryView({ 
-  patients = MOCK_PATIENTS, 
+  patients = [], 
   onSelectPatient,
   onOpenNewPatientModal,
   onOpenEditPatientModal 
@@ -24,7 +24,7 @@ export default function PatientsDirectoryView({
   const [searchTerm, setSearchTerm] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('todos');
 
-  const patientList = patients && patients.length > 0 ? patients : MOCK_PATIENTS;
+  const patientList = Array.isArray(patients) ? patients : [];
 
   const filteredPatients = patientList.filter(p => {
     const matchesSearch = (p.nombre || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -136,11 +136,20 @@ export default function PatientsDirectoryView({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredPatients.map((patient) => {
+              {filteredPatients.length === 0 ? (
+                <tr>
+                  <td colSpan="6" className="py-12 text-center text-slate-400">
+                    <p className="text-sm font-semibold text-slate-600">No hay pacientes disponibles para mostrar</p>
+                    <p className="text-xs mt-1 text-slate-400">Si el servidor se encuentra desconectado, revise la advertencia superior o intente reanudar la conexión.</p>
+                  </td>
+                </tr>
+              ) : (
+                filteredPatients.map((patient) => {
                 const isEmergencia = patient.prioridadClinica === 'Emergencia';
                 const isPrioritaria = patient.prioridadClinica === 'Prioritaria';
                 const isContacto = patient.prioridadClinica === 'Seguimiento de contacto';
                 const isBorrador = patient.estadoAlta === 'borrador';
+                const isBaseline = patient.isBaseline === true || ["LZ-0482", "LZ-0319", "LZ-0195", "LZ-0512", "LZ-0513", "LZ-0514"].includes(patient.id);
 
                 return (
                   <tr key={patient.id} className="hover:bg-lazo-canvas/50 transition-colors">
@@ -153,6 +162,15 @@ export default function PatientsDirectoryView({
                         <div>
                           <div className="flex items-center gap-2">
                             <p className="font-bold text-slate-900 text-sm">{patient.nombre}</p>
+                            {isBaseline ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                Referencia (Solo lectura)
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                Evaluador
+                              </span>
+                            )}
                             {isBorrador && (
                               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
                                 Borrador
@@ -231,9 +249,14 @@ export default function PatientsDirectoryView({
                       <div className="flex items-center justify-end gap-2">
                         {onOpenEditPatientModal && (
                           <button
-                            onClick={() => onOpenEditPatientModal(patient)}
-                            className="p-1.5 rounded-xl bg-lazo-canvas hover:bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200/80 transition-colors"
-                            title="Editar datos del paciente"
+                            onClick={() => !isBaseline && onOpenEditPatientModal(patient)}
+                            disabled={isBaseline}
+                            className={`p-1.5 rounded-xl border transition-colors ${
+                              isBaseline
+                                ? "bg-slate-50 text-slate-300 border-slate-200/60 cursor-not-allowed"
+                                : "bg-lazo-canvas hover:bg-slate-100 text-slate-600 hover:text-slate-900 border-slate-200/80"
+                            }`}
+                            title={isBaseline ? "Los pacientes de referencia clínica son de solo lectura" : "Editar datos del paciente"}
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
@@ -261,7 +284,7 @@ export default function PatientsDirectoryView({
                     </td>
                   </tr>
                 );
-              })}
+              }))}
             </tbody>
           </table>
         </div>

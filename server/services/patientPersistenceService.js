@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { MOCK_PATIENTS } from "../../src/data/mockPatients.js";
+import { BASELINE_PATIENT_IDS } from "./authService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -440,6 +441,7 @@ export function normalizeNotes(notas, fallbackData = {}) {
 export function normalizePatient(p) {
   if (!p || typeof p !== "object") return p;
 
+  const isBaseline = BASELINE_PATIENT_IDS.has(p.id) || p.isBaseline === true;
   const notas = normalizeNotes(p.notas, p);
   const medicacion = Array.isArray(p.medicacion) ? p.medicacion : [];
   const laboratorios = Array.isArray(p.laboratorios)
@@ -451,6 +453,9 @@ export function normalizePatient(p) {
 
   return {
     ...p,
+    isBaseline,
+    revisorId: isBaseline ? null : (p.revisorId || null),
+    revisorNombre: isBaseline ? "LAZO Referencia Clínica" : (p.revisorNombre || null),
     notas,
     medicacion,
     laboratorios,
@@ -464,9 +469,9 @@ export function normalizePatient(p) {
 }
 
 /**
- * Carga segura de pacientes desde archivo con inicialización resiliente
+ * Carga segura de pacientes desde archivo con inicialización resiliente y aislamiento por evaluador
  */
-export function getAllPatients(filters = {}) {
+export function getAllPatients(filters = {}, reviewerId = null) {
   try {
     if (!fs.existsSync(PATIENTS_FILE)) {
       return seedInitialPatients();
@@ -482,6 +487,11 @@ export function getAllPatients(filters = {}) {
     }
 
     let result = patients.map(normalizePatient);
+
+    // Aislamiento de evaluadores: solo pacientes basales + pacientes propios del evaluador
+    if (reviewerId !== null && reviewerId !== undefined) {
+      result = result.filter(p => p.isBaseline === true || BASELINE_PATIENT_IDS.has(p.id) || p.revisorId === reviewerId);
+    }
 
     if (filters.search) {
       const q = filters.search.toLowerCase().trim();
@@ -508,12 +518,22 @@ export function getAllPatients(filters = {}) {
 }
 
 /**
- * Obtener un paciente específico por su ID
+ * Obtener un paciente específico por su ID con verificación de pertenencia por evaluador
  */
-export function getPatientById(patientId) {
+export function getPatientById(patientId, reviewerId = null) {
   if (!patientId) return null;
-  const patients = getAllPatients();
-  return patients.find(p => p.id === patientId) || null;
+  const patients = getAllPatients({}, null);
+  const patient = patients.find(p => p.id === patientId) || null;
+  if (!patient) return null;
+
+  if (reviewerId !== null && reviewerId !== undefined) {
+    const isAllowed = patient.isBaseline === true || BASELINE_PATIENT_IDS.has(patient.id) || patient.revisorId === reviewerId;
+    if (!isAllowed) {
+      return null;
+    }
+  }
+
+  return patient;
 }
 
 /**
@@ -567,11 +587,11 @@ export function checkDuplicatePatient(patientData, existingPatients, ignoreId = 
 }
 
 /**
- * Crear un nuevo paciente (completo o borrador)
+ * Crear un nuevo paciente (completo o borrador) con aislamiento por evaluador
  */
-export async function createPatient(patientData) {
+export async function createPatient(patientData, reviewer = null) {
   return withWriteLock(async () => {
-    const patients = getAllPatients();
+    const patients = getAllPatients({}, null);
 
     // 1. Verificación de duplicados
     const dupCheck = checkDuplicatePatient(patientData, patients);
@@ -585,6 +605,13 @@ export async function createPatient(patientData) {
     const assignedId = (patientData.id && patientData.id.trim()) 
       ? patientData.id.trim().toUpperCase() 
       : generateNextPatientId(patients);
+
+    if (BASELINE_PATIENT_IDS.has(assignedId)) {
+      const err = new Error(`El identificador ${assignedId} está reservado para pacientes basales de referencia clínica.`);
+      err.statusCode = 409;
+      err.code = "BASELINE_ID_RESERVED";
+      throw err;
+    }
 
     // 3. Cálculo de edad a partir de fecha de nacimiento si aplica
     let edad = patientData.edad;
@@ -621,6 +648,9 @@ export async function createPatient(patientData) {
       fechaRegistro: todayStr,
       fechaIngresoLazo: todayStr,
       estadoAlta,
+      isBaseline: false,
+      revisorId: reviewer?.id || "local-dev-reviewer",
+      revisorNombre: reviewer?.name || "Evaluador Académico",
       estadoSeguimiento: patientData.estadoSeguimiento || "Activo (2x/semana)",
       prioridadClinica: patientData.prioridadClinica || "Rutina",
       diagnosticoPrincipal: (patientData.diagnosticoPrincipal || "Diabetes Mellitus Tipo 2").trim(),
@@ -751,9 +781,17 @@ export async function createPatient(patientData) {
 /**
  * Editar datos generales o clínicos de un paciente existente
  */
-export async function updatePatient(patientId, updateData) {
+export async function updatePatient(patientId, updateData, reviewer = null) {
   return withWriteLock(async () => {
-    const patients = getAllPatients();
+    // 1. Inmutabilidad estricta de pacientes basales de referencia (HTTP 403)
+    if (BASELINE_PATIENT_IDS.has(patientId)) {
+      const err = new Error(`El expediente ${patientId} es un paciente de referencia clínica de solo lectura y no puede modificarse.`);
+      err.statusCode = 403;
+      err.code = "BASELINE_PATIENT_PROTECTED";
+      throw err;
+    }
+
+    const patients = getAllPatients({}, null);
     const idx = patients.findIndex(p => p.id === patientId);
     if (idx === -1) {
       const err = new Error(`Paciente con ID ${patientId} no encontrado.`);
@@ -762,6 +800,20 @@ export async function updatePatient(patientId, updateData) {
     }
 
     const currentPatient = patients[idx];
+
+    if (currentPatient.isBaseline) {
+      const err = new Error(`El expediente ${patientId} es un paciente de referencia clínica de solo lectura y no puede modificarse.`);
+      err.statusCode = 403;
+      err.code = "BASELINE_PATIENT_PROTECTED";
+      throw err;
+    }
+
+    if (reviewer && currentPatient.revisorId && currentPatient.revisorId !== reviewer.id) {
+      const err = new Error(`No tiene permisos para modificar el expediente ${patientId}.`);
+      err.statusCode = 403;
+      err.code = "FORBIDDEN_REVIEWER_MISMATCH";
+      throw err;
+    }
 
     // Verificación de duplicados si cambió el nombre o la CURP
     if (updateData.nombre || updateData.fechaNacimiento || updateData.curp) {
@@ -826,9 +878,16 @@ export async function updatePatient(patientId, updateData) {
 /**
  * Agregar una nueva toma antropométrica con cálculo determinista de IMC e ICC
  */
-export async function addAnthropometryMeasurement(patientId, measurementData) {
+export async function addAnthropometryMeasurement(patientId, measurementData, reviewer = null) {
   return withWriteLock(async () => {
-    const patients = getAllPatients();
+    if (BASELINE_PATIENT_IDS.has(patientId)) {
+      const err = new Error(`El expediente ${patientId} es un paciente de referencia clínica de solo lectura y no admite nuevas mediciones.`);
+      err.statusCode = 403;
+      err.code = "BASELINE_PATIENT_PROTECTED";
+      throw err;
+    }
+
+    const patients = getAllPatients({}, null);
     const idx = patients.findIndex(p => p.id === patientId);
     if (idx === -1) {
       const err = new Error(`Paciente con ID ${patientId} no encontrado.`);
@@ -837,6 +896,19 @@ export async function addAnthropometryMeasurement(patientId, measurementData) {
     }
 
     const patient = patients[idx];
+    if (patient.isBaseline) {
+      const err = new Error(`El expediente ${patientId} es un paciente de referencia clínica de solo lectura y no admite nuevas mediciones.`);
+      err.statusCode = 403;
+      err.code = "BASELINE_PATIENT_PROTECTED";
+      throw err;
+    }
+    if (reviewer && patient.revisorId && patient.revisorId !== reviewer.id) {
+      const err = new Error(`No tiene permisos para modificar el expediente ${patientId}.`);
+      err.statusCode = 403;
+      err.code = "FORBIDDEN_REVIEWER_MISMATCH";
+      throw err;
+    }
+
     if (!patient.antropometria) {
       patient.antropometria = { mediciones: [] };
     }
@@ -890,9 +962,16 @@ export async function addAnthropometryMeasurement(patientId, measurementData) {
 /**
  * Actualizar estilo de vida (actividad física o alimentación) conservando procedencia
  */
-export async function updateLifestyle(patientId, { actividadFisica, alimentacion, fuente = "medico" }) {
+export async function updateLifestyle(patientId, { actividadFisica, alimentacion, fuente = "medico" }, reviewer = null) {
   return withWriteLock(async () => {
-    const patients = getAllPatients();
+    if (BASELINE_PATIENT_IDS.has(patientId)) {
+      const err = new Error(`El expediente ${patientId} es un paciente de referencia clínica de solo lectura y no admite modificaciones.`);
+      err.statusCode = 403;
+      err.code = "BASELINE_PATIENT_PROTECTED";
+      throw err;
+    }
+
+    const patients = getAllPatients({}, null);
     const idx = patients.findIndex(p => p.id === patientId);
     if (idx === -1) {
       const err = new Error(`Paciente con ID ${patientId} no encontrado.`);
@@ -901,6 +980,19 @@ export async function updateLifestyle(patientId, { actividadFisica, alimentacion
     }
 
     const patient = patients[idx];
+    if (patient.isBaseline) {
+      const err = new Error(`El expediente ${patientId} es un paciente de referencia clínica de solo lectura y no admite modificaciones.`);
+      err.statusCode = 403;
+      err.code = "BASELINE_PATIENT_PROTECTED";
+      throw err;
+    }
+    if (reviewer && patient.revisorId && patient.revisorId !== reviewer.id) {
+      const err = new Error(`No tiene permisos para modificar el expediente ${patientId}.`);
+      err.statusCode = 403;
+      err.code = "FORBIDDEN_REVIEWER_MISMATCH";
+      throw err;
+    }
+
     if (!patient.estiloVida) {
       patient.estiloVida = {};
     }
@@ -938,9 +1030,16 @@ export async function updateLifestyle(patientId, { actividadFisica, alimentacion
 /**
  * Validar o rectificar un dato clínico reportado por llamada telefónica
  */
-export async function validateReportedField(patientId, { section, fieldId, valorAprobado, notas = "" }) {
+export async function validateReportedField(patientId, { section, fieldId, valorAprobado, notas = "" }, reviewer = null) {
   return withWriteLock(async () => {
-    const patients = getAllPatients();
+    if (BASELINE_PATIENT_IDS.has(patientId)) {
+      const err = new Error(`El expediente ${patientId} es un paciente de referencia clínica de solo lectura y no admite validación de campos.`);
+      err.statusCode = 403;
+      err.code = "BASELINE_PATIENT_PROTECTED";
+      throw err;
+    }
+
+    const patients = getAllPatients({}, null);
     const idx = patients.findIndex(p => p.id === patientId);
     if (idx === -1) {
       const err = new Error(`Paciente con ID ${patientId} no encontrado.`);
@@ -949,6 +1048,18 @@ export async function validateReportedField(patientId, { section, fieldId, valor
     }
 
     const patient = patients[idx];
+    if (patient.isBaseline) {
+      const err = new Error(`El expediente ${patientId} es un paciente de referencia clínica de solo lectura y no admite validación de campos.`);
+      err.statusCode = 403;
+      err.code = "BASELINE_PATIENT_PROTECTED";
+      throw err;
+    }
+    if (reviewer && patient.revisorId && patient.revisorId !== reviewer.id) {
+      const err = new Error(`No tiene permisos para modificar el expediente ${patientId}.`);
+      err.statusCode = 403;
+      err.code = "FORBIDDEN_REVIEWER_MISMATCH";
+      throw err;
+    }
     const todayStr = new Date().toISOString().split("T")[0];
 
     if (section === "antropometria") {
@@ -994,5 +1105,39 @@ export async function validateReportedField(patientId, { section, fieldId, valor
     atomicWriteJsonSync(PATIENTS_FILE, patients);
     console.log(`[PatientPersistence] 🩺 Dato validado por médico en ${patientId} (Sección: ${section}).`);
     return patient;
+  });
+}
+
+/**
+ * Eliminación protegida de paciente (bloqueo absoluto de basales y aislamiento por revisor)
+ */
+export async function deletePatient(patientId, reviewer = null) {
+  return withWriteLock(async () => {
+    if (BASELINE_PATIENT_IDS.has(patientId)) {
+      const err = new Error("Los pacientes basales de demostración clínica son de solo lectura y no pueden eliminarse.");
+      err.statusCode = 403;
+      err.code = "BASELINE_PATIENT_PROTECTED";
+      throw err;
+    }
+
+    const patients = getAllPatients({}, null);
+    const patient = patients.find(p => p.id === patientId);
+    if (!patient) {
+      const err = new Error(`Paciente con ID ${patientId} no encontrado.`);
+      err.statusCode = 404;
+      throw err;
+    }
+
+    if (patient.revisorId && reviewer && patient.revisorId !== reviewer.id) {
+      const err = new Error("No tiene permisos para eliminar expedientes creados por otro evaluador.");
+      err.statusCode = 403;
+      err.code = "REVIEWER_MISMATCH";
+      throw err;
+    }
+
+    const filtered = patients.filter(p => p.id !== patientId);
+    atomicWriteJsonSync(PATIENTS_FILE, filtered);
+    console.log(`[PatientPersistence] 🗑️ Paciente ${patientId} eliminado.`);
+    return { success: true, message: `Paciente ${patientId} eliminado.` };
   });
 }

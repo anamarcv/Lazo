@@ -97,21 +97,36 @@ export async function generateClinicalSummary({ transcript, patient, callMetadat
     .map(t => `[${t.segundo !== undefined ? t.segundo + "s" : "0s"}] ${t.hablante || (t.speaker === "lazo" ? "Lazo (IA)" : "Paciente")}: ${t.texto || t.text}`)
     .join("\n");
 
+  const isTimeout = 
+    callMetadata?.terminacionMotivo === "timeout_duration_limit" || 
+    callMetadata?.reason === "timeout_duration_limit" || 
+    (typeof callMetadata?.durationSeconds === "number" && callMetadata.durationSeconds >= 300);
+
+  const timeoutInstruction = isTimeout ? `
+=== AVISO DE LÍMITE DE DURACIÓN (5 MINUTOS) ALCANZADO ===
+Esta llamada concluyó automáticamente por haber alcanzado el límite reglamentario de duración de 5 minutos (300 segundos).
+REGLA INQUEBRANTABLE DE SEGURIDAD CLÍNICA:
+Para CUALQUIER sección clínica, medicamento, toma de glucosa, actividad física o barrera que NO haya alcanzado a ser explorada en el diálogo antes del corte de tiempo, debes colocar EXACTAMENTE:
+"No explorado (llamada concluida por límite de duración de 5 minutos)"
+NUNCA asumas normalidad ni descartes omisiones de forma negativa para temas no conversados antes del corte.
+` : "";
+
   const prompt = `
 Eres el motor de análisis clínico estructurado para el expediente de LAZO (seguimiento de diabetes tipo 2 conforme a NOM-004-SSA3-2012).
 Tu tarea es analizar la siguiente transcripción REAL de una llamada telefónica y estructurar un resumen clínico en formato JSON estricto.
-
+${timeoutInstruction}
 === DIRECTRICES ESTRICTAS DE NO ALUCINACIÓN Y VERACIDAD ===
 1. RIGOR TOTAL: Basa tus respuestas ÚNICAMENTE en lo que el PACIENTE haya dicho expresamente en la transcripción. NUNCA inventes síntomas, cifras, omisiones ni citas.
-2. CITAS Y TRAZABILIDAD: Para cada hallazgo relevante en seguridad, medicamentos y glucosa, incluye "fuenteSegundo" (entero con el segundo del turno donde se dijo) y "fuenteTexto" (frase textual que dijo el paciente).
+2. CITAS Y TRAZABILIDAD: Para cada hallazgo relevante en seguridad, medicamentos y glucosa, incluye "fuenteSegundo" (entero con el segundo del turno donde se dicho) y "fuenteTexto" (frase textual que dijo el paciente).
 3. AISLAMIENTO ESTRICTO DE GLUCOSA:
    - NUNCA confundas la fecha de nacimiento (14 de mayo, 1964), la edad (60 años), ni dosis en miligramos (850 mg, 50 mg) o unidades de insulina (18 UI) con cifras de glucosa.
-   - Solo registra una cifra en "bitacoraGlucosa" si el paciente se refirió inequívocamente a su azúcar en sangre o glucosa (ej. "traía 128", "marcó 135 en ayunas"). Si no dictó glucosa, coloca valor: "No dictada en llamada".
+   - Solo registra una cifra en "bitacoraGlucosa" si el paciente se refirió inequívocamente a su azúcar en sangre o glucosa (ej. "traía 128", "marcó 135 en ayunas"). Si no dictó glucosa, coloca valor: ${isTimeout ? '"No explorado (llamada concluida por límite de duración de 5 minutos)"' : '"No dictada en llamada"'}.
 4. MEMORIA DE OMISIONES:
    - Si el paciente mencionó omitir alguna dosis y explicó la causa (ej. "porque me quedé dormido", "salí tarde del trabajo"), anota esa causa exacta en "motivo" y sintetiza la "barrera".
-   - Si no refirió omisiones, pon "0 dosis referidas", "motivo": "N/A" y "barrera": null.
+   - Si no refirió omisiones y el medicamento se exploró, pon "0 dosis referidas", "motivo": "N/A" y "barrera": null.
+   - Si el medicamento no fue mencionado: ${isTimeout ? '"No explorado (llamada concluida por límite de duración de 5 minutos)"' : '"Dato no explorado en la llamada"'}.
 5. ACTIVIDAD FÍSICA Y HÁBITOS DE VIDA:
-   - Extrae con precisión la actividad física reportada por el paciente (ej. caminar, gimnasio, pesas, bicicleta, minutos por sesión).
+   - Extrae con precisión la actividad física reportada por el paciente (ej. caminar, gimnasio, pesas, bicicleta, minutos por sesión). Si no se exploró: ${isTimeout ? '"No explorado (llamada concluida por límite de duración de 5 minutos)"' : '"Dato no explorado en la llamada."'}.
    - NUNCA atribuyas ni inventes consumo de alcohol o cervezas a partir de artefactos fonéticos de transcripción (por ejemplo, si la transcripción en crudo dice "gimnasio a cervezas", contextualízalo inequívocamente como acondicionamiento físico o pesas, o usa "[fonética ambigua]", JAMÁS imputes consumo alcohólico).
 6. ALERTAS CLÍNICAS:
    - "Emergencia": solo ante descompensación aguda explícita (dolor de pecho, dificultad respiratoria grave, confusión, desmayo, glucosa > 300 con vómitos, o hipoglucemia < 54).
@@ -133,7 +148,7 @@ Responde ÚNICAMENTE con un objeto JSON válido con la siguiente estructura:
   "motivoAbstencion": null,
   "seguridadYAlertas": {
     "sintomasAlarma": "Descripción de síntomas si los hubo, o: No se identificaron síntomas agudos de alarma reportados durante el diálogo.",
-    "interrupciones": "Llamada concluida de acuerdo a protocolo.",
+    "interrupciones": "${isTimeout ? "Llamada concluida automáticamente por límite reglamentario de 5 minutos." : "Llamada concluida de acuerdo a protocolo."}",
     "accionesRealizadas": "Registro en expediente electrónico para revisión de Dra. Anamar Cordero Valle.",
     "evaluabilidad": "Información confirmada verbalmente por el paciente en la llamada.",
     "fuenteSegundo": 0,
@@ -143,8 +158,8 @@ Responde ÚNICAMENTE con un objeto JSON válido con la siguiente estructura:
     {
       "medicamento": "Nombre del medicamento",
       "pauta": "Pauta prescrita",
-      "reportePaciente": "Lo que el paciente confirmó o 'Dato no explorado en la llamada'",
-      "dosisOmitidas": "0 dosis referidas",
+      "reportePaciente": "Lo que el paciente confirmó o '${isTimeout ? "No explorado (llamada concluida por límite de duración de 5 minutos)" : "Dato no explorado en la llamada"}'",
+      "dosisOmitidas": "0 dosis referidas o no explorado",
       "motivo": "N/A",
       "barrera": null,
       "efectosAdversos": "No refiere posibles efectos adversos",
@@ -157,15 +172,15 @@ Responde ÚNICAMENTE con un objeto JSON válido con la siguiente estructura:
       "fecha": "Hoy",
       "hora": "Hora aproximada",
       "momento": "En ayunas / Posprandial / No especificado",
-      "valor": "Cifra con mg/dL o 'No dictada en llamada'",
+      "valor": "Cifra con mg/dL o '${isTimeout ? "No explorado (llamada concluida por límite de duración de 5 minutos)" : "No dictada en llamada"}'",
       "certeza": "Dato dictado por el paciente o 'Sin registro'",
       "fuenteSegundo": 0,
       "fuenteTexto": "Cita textual o null"
     }
   ],
-  "actividadFisica": "Reporte de actividad física o 'Dato no explorado en la llamada.'",
+  "actividadFisica": "Reporte de actividad física o '${isTimeout ? "No explorado (llamada concluida por límite de duración de 5 minutos)" : "Dato no explorado en la llamada."}'",
   "barrerasYNecesidades": "Barreras reportadas o 'Sin barreras manifiestas durante la llamada.'",
-  "informacionAdicional": "Observaciones para la doctora basadas únicamente en lo hablado.",
+  "informacionAdicional": "Observaciones para la doctora basadas únicamente en lo hablado.${isTimeout ? " Nota: Llamada finalizada al límite de 5 minutos." : ""}",
   "alertaGenerada": "Normal (Seguimiento rutinario)",
   "verificacionIdentidad": "Verificada exitosamente",
   "permisoGrabacion": "Aceptado"
@@ -190,13 +205,13 @@ Responde ÚNICAMENTE con un objeto JSON válido con la siguiente estructura:
 
     if (!response.ok) {
       console.warn("[ClinicalSummary] Gemini Flash falló o tardó. Usando extractor determinista.");
-      return createFallbackSummaryFromTranscript(transcript, patient, "Resumen procesado por analizador determinista local.");
+      return createFallbackSummaryFromTranscript(transcript, patient, "Resumen procesado por analizador determinista local.", callMetadata);
     }
 
     const data = await response.json();
     const rawJson = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!rawJson) {
-      return createFallbackSummaryFromTranscript(transcript, patient, "Resumen extraído de la conversación.");
+      return createFallbackSummaryFromTranscript(transcript, patient, "Resumen extraído de la conversación.", callMetadata);
     }
 
     const parsed = JSON.parse(rawJson);
@@ -207,7 +222,7 @@ Responde ÚNICAMENTE con un objeto JSON válido con la siguiente estructura:
 
   } catch (err) {
     console.warn("[ClinicalSummary] Fallback a extractor determinista:", err.message);
-    return createFallbackSummaryFromTranscript(transcript, patient, "Resumen estructurado por analizador clínico determinista.");
+    return createFallbackSummaryFromTranscript(transcript, patient, "Resumen estructurado por analizador clínico determinista.", callMetadata);
   }
 }
 
@@ -230,10 +245,22 @@ function createAbstentionSummary(motivo, detalles, callMetadata) {
   };
 }
 
-export function createFallbackSummaryFromTranscript(transcript, patient, nota = "") {
-  const patientTurns = (transcript || []).filter(t => 
-    (t.hablante || t.speaker || "").toLowerCase().includes("paciente")
-  );
+export function createFallbackSummaryFromTranscript(transcript, patient, nota = "", callMetadata = {}) {
+  const isTimeout = 
+    callMetadata?.terminacionMotivo === "timeout_duration_limit" || 
+    callMetadata?.reason === "timeout_duration_limit" || 
+    callMetadata?.timeoutReached === true ||
+    patient?.timeoutReached === true ||
+    (typeof callMetadata?.durationSeconds === "number" && callMetadata.durationSeconds >= 300);
+
+  const unexploredLabel = isTimeout 
+    ? "No explorado (llamada concluida por límite de duración de 5 minutos)" 
+    : "Dato no explorado en la llamada";
+
+  const patientTurns = (transcript || []).filter(t => {
+    const spk = (t.hablante || t.speaker || "").toLowerCase();
+    return spk.includes("paciente") || spk.includes("user") || spk.includes("usuario");
+  });
 
   // 1. Detección de emergencias
   let hasEmergency = false;
@@ -329,8 +356,8 @@ export function createFallbackSummaryFromTranscript(transcript, patient, nota = 
         (firstWord === "metformina" && (text.includes("pastilla") || text.includes("azúcar") || text.includes("azucar")));
     });
 
-    let reportePaciente = "Dato no explorado en la llamada";
-    let dosisOmitidas = "0 dosis referidas";
+    let reportePaciente = unexploredLabel;
+    let dosisOmitidas = isTimeout ? "No explorado (corte de tiempo a los 5 minutos)" : "0 dosis referidas";
     let motivo = "N/A";
     let barrera = null;
     let fuenteSegundo = null;
@@ -374,6 +401,7 @@ export function createFallbackSummaryFromTranscript(transcript, patient, nota = 
         globalBarrera = `Dificultad reportada: ${barrera}`;
       } else {
         reportePaciente = "Confirmado apego adecuado en la llamada";
+        dosisOmitidas = "0 dosis referidas";
       }
     }
 
@@ -397,7 +425,7 @@ export function createFallbackSummaryFromTranscript(transcript, patient, nota = 
            text.includes("actividad") || text.includes("gimnasio") || text.includes("pesas") || 
            text.includes("bici") || text.includes("bicicleta") || text.includes("natación") || text.includes("correr");
   });
-  let actividadFisica = "Dato no explorado en la llamada.";
+  let actividadFisica = isTimeout ? unexploredLabel : "Dato no explorado en la llamada.";
   if (activityTurn) {
     let actText = (activityTurn.texto || activityTurn.text || "").trim();
     // Neutralizar artefactos fonéticos de streaming ASR en contexto de ejercicio (ej. "a cervezas" -> "a hacer pesas")
@@ -423,6 +451,8 @@ export function createFallbackSummaryFromTranscript(transcript, patient, nota = 
         : "No se identificaron síntomas agudos de alarma reportados durante el diálogo.",
       interrupciones: hasEmergency 
         ? "Derivación por seguridad clínica según protocolo." 
+        : isTimeout
+        ? "Llamada concluida automáticamente por límite de duración de 5 minutos."
         : "Llamada concluida de acuerdo a protocolo.",
       accionesRealizadas: `Registro en expediente electrónico para revisión de ${patient?.medicoTratante || "médica tratante"}.`,
       evaluabilidad: "Información verificable extraída directamente del diálogo del paciente.",
@@ -435,8 +465,8 @@ export function createFallbackSummaryFromTranscript(transcript, patient, nota = 
         fecha: "Hoy",
         hora: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         momento: "No especificado",
-        valor: "No dictada en llamada",
-        certeza: "Sin registro",
+        valor: isTimeout ? unexploredLabel : "No dictada en llamada",
+        certeza: isTimeout ? "No explorado" : "Sin registro",
         fuenteSegundo: null,
         fuenteTexto: null
       }
@@ -446,6 +476,10 @@ export function createFallbackSummaryFromTranscript(transcript, patient, nota = 
     informacionAdicional: `${nota || "Resumen estructurado para revisión médica."} Todas las citas cuentan con segundo verificable en el audio.`,
     alertaGenerada,
     verificacionIdentidad: "Verificada exitosamente",
-    permisoGrabacion: "Aceptado"
+    permisoGrabacion: "Aceptado",
+    limitacionDuracion5Min: Boolean(isTimeout),
+    conclusiones: isTimeout 
+      ? ["Llamada concluida por límite de duración de 5 minutos.", "Las secciones pendientes quedaron rotuladas como no exploradas."]
+      : ["Seguimiento clínico de rutina completado según protocolo NOM-004."]
   };
 }

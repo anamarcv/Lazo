@@ -33,6 +33,7 @@ export default function PatientHeader({
 
   const isEmergencia = patient.prioridadClinica === 'Emergencia';
   const isPrioritaria = patient.prioridadClinica === 'Prioritaria';
+  const isBaseline = patient.isBaseline === true || ["LZ-0482", "LZ-0319", "LZ-0195", "LZ-0512", "LZ-0513", "LZ-0514"].includes(patient.id);
 
   return (
     <div className="bg-white rounded-3xl border border-slate-100 shadow-card p-7 pb-0 space-y-6">
@@ -56,6 +57,15 @@ export default function PatientHeader({
                 <h2 className="text-xl font-extrabold text-slate-900 tracking-tight">
                   {patient.nombre}
                 </h2>
+                {isBaseline ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                    Referencia (Solo lectura)
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    Expediente Evaluador
+                  </span>
+                )}
                 {patient.estadoAlta === 'borrador' && (
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-200">
                     Borrador pendiente
@@ -89,12 +99,17 @@ export default function PatientHeader({
         <div className="flex items-center gap-3">
           {onOpenEditModal && (
             <button
-              onClick={onOpenEditModal}
-              className="px-4 py-2.5 rounded-2xl bg-lazo-canvas hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-200/80 transition-colors flex items-center gap-2"
-              title="Editar datos del paciente"
+              onClick={() => !isBaseline && onOpenEditModal()}
+              disabled={isBaseline}
+              className={`px-4 py-2.5 rounded-2xl text-xs font-semibold border transition-colors flex items-center gap-2 ${
+                isBaseline
+                  ? "bg-slate-50 text-slate-300 border-slate-200/60 cursor-not-allowed"
+                  : "bg-lazo-canvas hover:bg-slate-100 text-slate-700 border-slate-200/80"
+              }`}
+              title={isBaseline ? "Los pacientes de referencia clínica son de solo lectura" : "Editar datos del paciente"}
             >
-              <Edit3 className="w-3.5 h-3.5 text-slate-500" />
-              <span>Editar datos</span>
+              <Edit3 className="w-3.5 h-3.5 text-slate-400" />
+              <span>{isBaseline ? "Solo lectura" : "Editar datos"}</span>
             </button>
           )}
 

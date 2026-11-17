@@ -9,18 +9,35 @@ dist-ssr/
 build/
 *.local
 
-# Environment variables & secrets
+# Environment variables & secrets (NUNCA incluir en Git)
 .env
 .env.*
+*.env
+**/.env
+**/.env.*
+!**/.env.example
 !.env.example
 
-# Logs
+# Credenciales, llaves criptográficas y certificados
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+credentials.json
+service-account*.json
+google-services.json
+GoogleService-Info.plist
+
+# Logs del sistema y depuración
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 *.log
+.system_generated/
 
 # Editor & OS files
 .DS_Store
@@ -38,13 +55,28 @@ Thumbs.db
 *.sln
 *.sw?
 
-# Local backups and temporary scratch
+# Respaldos locales y directorios temporales
 .backups/
+**/.backups/
 scratch/
+**/scratch/
+server/data/backups/
+**/backups/
+*.bak*
+*.tmp
 
-# Backend audio recordings and call logs
+# Datos clínicos persistidos y grabaciones de audio (Privacidad estricta)
 server/recordings/
-server/data/calls.json
+**/recordings/
 server/data/recordings/
+server/data/calls.json
+server/data/patients.json
 *.wav
+*.mp3
+*.m4a
+*.ogg
+*.aac
 
+# Volcados de base de datos
+*.sql.dump
+*.dump

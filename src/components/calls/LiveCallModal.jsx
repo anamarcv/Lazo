@@ -27,6 +27,7 @@ export default function LiveCallModal({ isOpen, onClose, patient, onCallComplete
   const [callDuration, setCallDuration] = useState(0);
   const [consentStatus, setConsentStatus] = useState("pending"); // pending | granted | denied
   const [savedCall, setSavedCall] = useState(null);
+  const [timeWarning, setTimeWarning] = useState(null);
 
   const streamerRef = useRef(null);
   const timerRef = useRef(null);
@@ -38,11 +39,15 @@ export default function LiveCallModal({ isOpen, onClose, patient, onCallComplete
     diagnosticoPrincipal: "Diabetes Mellitus Tipo 2"
   };
 
+  const isBaselinePatient = activePatient.isBaseline === true || 
+    ["LZ-0482", "LZ-0319", "LZ-0195", "LZ-0512", "LZ-0513", "LZ-0514"].includes(activePatient.id);
+
   useEffect(() => {
     if (!isOpen) {
       handleEndCall();
       setSavedCall(null);
       setConsentStatus("pending");
+      setTimeWarning(null);
     }
     return () => {
       handleEndCall();
@@ -52,7 +57,12 @@ export default function LiveCallModal({ isOpen, onClose, patient, onCallComplete
   useEffect(() => {
     if (callStatus === "active" || callStatus === "interrupted") {
       timerRef.current = setInterval(() => {
-        setCallDuration(prev => prev + 1);
+        setCallDuration(prev => {
+          if (prev + 1 >= 270 && !timeWarning) {
+            setTimeWarning("Límite de 5 minutos próximo a cumplirse");
+          }
+          return prev + 1;
+        });
       }, 1000);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -69,15 +79,25 @@ export default function LiveCallModal({ isOpen, onClose, patient, onCallComplete
   };
 
   const handleStartCall = async () => {
+    if (isBaselinePatient) {
+      setErrorMessage("Los pacientes de referencia clínica son de solo lectura. Cree un paciente de prueba para realizar llamadas en vivo.");
+      setCallStatus("error");
+      return;
+    }
+
     setErrorMessage("");
     setTranscripts([]);
     setCallDuration(0);
     setConsentStatus("pending");
     setSavedCall(null);
+    setTimeWarning(null);
 
     const streamer = new LiveAudioStreamer({
       onStatusChange: (status) => {
         setCallStatus(status);
+      },
+      onWarning: (msg) => {
+        setTimeWarning(msg.message || "Límite de duración próximo a cumplirse");
       },
       onTranscript: (msg) => {
         setTranscripts(prev => {
@@ -235,17 +255,31 @@ export default function LiveCallModal({ isOpen, onClose, patient, onCallComplete
               <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
                 Hablarás como el paciente <strong className="text-slate-800">{activePatient.nombre}</strong> con la asistente clínica <strong className="text-emerald-800">Lazo</strong> impulsada por Gemini Live API.
               </p>
-              <div className="p-3 bg-emerald-50 rounded-xl text-emerald-800 text-xs text-left space-y-1">
-                <p className="font-bold flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                  Protocolo de llamada:
-                </p>
-                <p className="text-[11px] text-emerald-700">
-                  1. Lazo te saludará automáticamente por voz.<br />
-                  2. Te pedirá confirmar tu nombre y fecha de nacimiento (14/05/1964).<br />
-                  3. Solicitará tu consentimiento para grabar antes de continuar.
-                </p>
-              </div>
+
+              {isBaselinePatient ? (
+                <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-left space-y-1.5 animate-fadeIn">
+                  <div className="flex items-center gap-2 text-amber-900 font-bold text-xs">
+                    <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Expediente de Referencia Clínica (Solo Lectura)</span>
+                  </div>
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    Este paciente es parte de la cohorte basal de referencia médica inmutable. Para interactuar en vivo con la telefonía y evaluar la documentación, por favor cree un nuevo paciente de prueba en la sección "Pacientes".
+                  </p>
+                </div>
+              ) : (
+                <div className="p-3 bg-emerald-50 rounded-xl text-emerald-800 text-xs text-left space-y-1">
+                  <p className="font-bold flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                    Protocolo de llamada (Máx. 5 minutos):
+                  </p>
+                  <p className="text-[11px] text-emerald-700">
+                    1. Lazo te saludará automáticamente por voz.<br />
+                    2. Te pedirá confirmar tu nombre y fecha de nacimiento.<br />
+                    3. Solicitará consentimiento para registrar el diálogo.<br />
+                    4. La llamada concluye automáticamente a los 5 minutos (aviso a los 4m 30s).
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -283,9 +317,31 @@ export default function LiveCallModal({ isOpen, onClose, patient, onCallComplete
                 </span>
 
                 <span className="font-mono font-bold text-slate-200">
-                  {formatDuration(callDuration)}
+                  {formatDuration(callDuration)} / 5:00
                 </span>
               </div>
+
+              {/* Barra de progreso de tiempo hacia los 5 minutos (300 segundos) */}
+              <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full transition-all duration-1000 ${
+                    callDuration >= 270 ? "bg-amber-400" : "bg-emerald-500"
+                  }`}
+                  style={{ width: `${Math.min(100, (callDuration / 300) * 100)}%` }}
+                />
+              </div>
+
+              {/* Advertencia de 270s (4m 30s) */}
+              {(callDuration >= 270 || timeWarning) && (
+                <div className="p-2.5 rounded-xl bg-amber-500/20 border border-amber-400/40 text-amber-200 text-xs flex items-center justify-between gap-2 animate-pulse">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-amber-300 shrink-0" />
+                    <span className="text-[11.5px]">
+                      Límite de 5 min próximo: restan <strong>{Math.max(0, 300 - callDuration)}s</strong>. La llamada se cerrará automáticamente.
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* Visualizador de Ondas de Voz */}
               <div className="flex items-center justify-center gap-1.5 h-14">
@@ -441,11 +497,12 @@ export default function LiveCallModal({ isOpen, onClose, patient, onCallComplete
                   Cancelar
                 </button>
                 <button
+                  disabled={isBaselinePatient}
                   onClick={handleStartCall}
-                  className="px-5 py-2.5 rounded-2xl bg-[#0D4D43] hover:bg-emerald-900 text-white font-bold text-xs transition-colors flex items-center gap-2 shadow-soft"
+                  className="px-5 py-2.5 rounded-2xl bg-[#0D4D43] hover:bg-emerald-900 text-white font-bold text-xs transition-colors flex items-center gap-2 shadow-soft disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Phone className="w-4 h-4" />
-                  <span>Iniciar conversación</span>
+                  <span>{isBaselinePatient ? "Solo lectura (Referencia)" : "Iniciar conversación"}</span>
                 </button>
               </>
             )}

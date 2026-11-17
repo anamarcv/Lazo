@@ -4,13 +4,14 @@
  */
 
 export class LiveAudioStreamer {
-  constructor({ onStatusChange, onTranscript, onError, onVolume, onConsentChange, onCallSaved }) {
+  constructor({ onStatusChange, onTranscript, onError, onVolume, onConsentChange, onCallSaved, onWarning }) {
     this.onStatusChange = onStatusChange || (() => {});
     this.onTranscript = onTranscript || (() => {});
     this.onError = onError || (() => {});
     this.onVolume = onVolume || (() => {});
     this.onConsentChange = onConsentChange || (() => {});
     this.onCallSaved = onCallSaved || (() => {});
+    this.onWarning = onWarning || (() => {});
 
     this.callId = null;
     this.ws = null;
@@ -272,6 +273,11 @@ export class LiveAudioStreamer {
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('lazo_call_saved', { detail: msg.call }));
           }
+          break;
+
+        case 'call_warning':
+          console.log('[AudioStreamer] ⏱️ Advertencia de tiempo recibida del servidor:', msg.message);
+          this.onWarning(msg);
           break;
 
         case 'error':

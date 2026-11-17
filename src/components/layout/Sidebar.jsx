@@ -12,7 +12,7 @@ import {
 import LazoLogo from '../common/LazoLogo';
 import { CURRENT_DOCTOR } from '../../data/mockPatients';
 
-export default function Sidebar({ currentView, setCurrentView, selectedPatient, onSelectPatient, onLogout }) {
+export default function Sidebar({ currentView, setCurrentView, selectedPatient, onSelectPatient, onLogout, reviewer }) {
   const navItems = [
     { id: 'dashboard', label: 'Inicio', icon: LayoutDashboard },
     { id: 'patients', label: 'Pacientes', icon: Users, badge: '4' },
@@ -21,6 +21,15 @@ export default function Sidebar({ currentView, setCurrentView, selectedPatient, 
     { id: 'reports', label: 'Reportes Poblacionales', icon: BarChart3 },
     { id: 'settings', label: 'Configuración', icon: Settings }
   ];
+
+  const displayName = reviewer?.name || CURRENT_DOCTOR.name;
+  const initials = displayName
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(w => w[0])
+    .join('')
+    .toUpperCase() || 'EV';
 
   return (
     <aside className="w-72 bg-white border-r border-slate-100 flex flex-col justify-between h-screen sticky top-0 z-30 select-none">
@@ -79,26 +88,28 @@ export default function Sidebar({ currentView, setCurrentView, selectedPatient, 
         </nav>
       </div>
 
-      {/* Doctor Profile Footer with Logout */}
+      {/* Doctor / Reviewer Profile Footer with Logout */}
       <div className="p-4 m-4 bg-lazo-canvas rounded-2xl border border-slate-100/80">
         <div className="flex items-center justify-between">
           <div 
             onClick={() => setCurrentView('settings')}
             className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity flex-1 min-w-0"
-            title="Ver perfil médico y configuración"
+            title="Ver perfil y configuración"
           >
             <div className="w-10 h-10 rounded-full bg-lazo-sage text-lazo-primary flex items-center justify-center font-bold text-sm border border-lazo-mint/60 shrink-0">
-              AC
+              {initials}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold text-lazo-text truncate">{CURRENT_DOCTOR.name}</p>
-              <p className="text-[11px] text-slate-400 truncate">Céd. {CURRENT_DOCTOR.cedula}</p>
+              <p className="text-xs font-bold text-lazo-text truncate">{displayName}</p>
+              <p className="text-[10px] text-slate-400 truncate">
+                {reviewer?.id ? `Sesión: ${reviewer.id.slice(0, 10)}...` : `Céd. ${CURRENT_DOCTOR.cedula}`}
+              </p>
             </div>
           </div>
 
           <button
             onClick={onLogout}
-            className="p-2 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors ml-1"
+            className="p-2 rounded-xl text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors ml-1 cursor-pointer"
             title="Cerrar sesión"
           >
             <LogOut className="w-4 h-4" />
@@ -108,7 +119,7 @@ export default function Sidebar({ currentView, setCurrentView, selectedPatient, 
         <div className="mt-3 pt-3 border-t border-slate-200/50 flex items-center justify-between text-[11px] text-slate-500">
           <span className="flex items-center gap-1 text-emerald-700 font-medium">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            Lazo V1 Activo
+            Lazo V2 Sandbox
           </span>
           <span className="text-slate-400">Primer Nivel</span>
         </div>
