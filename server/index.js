@@ -410,6 +410,18 @@ app.get("/api/recordings/:fileName", (req, res) => {
   }
 });
 
+// Servir frontend compilado en producción (Vite dist/)
+const distPath = path.join(__dirname, "../dist");
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api") || req.path.startsWith("/ws")) {
+      return next();
+    }
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+}
+
 const server = http.createServer(app);
 
 // 6. Servidor de WebSockets para audio bidireccional en vivo
